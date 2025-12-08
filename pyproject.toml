@@ -14,9 +14,9 @@ pydantic-settings = "^2.6"
 [tool.poetry.group.host.dependencies]
 sqlalchemy = "^2.0"
 websockets = "^14.1"  # For Signal Transport Proxy
+signal-client = "^0.1.0"
 
 [tool.poetry.group.enclave.dependencies]
-signal-client = "^0.1.0"
 openai = "^1.57"
 cryptography = "^44.0"
 # instructor = "^1.6.0"

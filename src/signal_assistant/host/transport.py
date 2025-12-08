@@ -42,7 +42,7 @@ class VsockServer:
             if sock:
                 self.server = await asyncio.start_server(client_handler, sock=sock)
             else:
-                self.server = await asyncio.start_server(client_handler, host, self.port)
+                self.server = await asyncio.start_server(client_handler, host, self.port, reuse_address=True)
             
             logger.info(f"Server started on port {self.port}")
             async with self.server:

@@ -1,12 +1,13 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr, Field
-
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import SecretStr, Field
+from typing import Optional
 
 class HostSettings(BaseSettings):
     """Configuration for the Untrusted Host Sidecar."""
     database_url: str = Field("sqlite:///./signal_assistant.db", description="Database connection string")
+    signal_service_url: str = Field("ws://localhost:8080/v1/receive", description="URL for the Signal Service WebSocket")
+    signal_account_path: Optional[str] = Field(None, description="Path to the Signal account data directory.")
+    signal_account_id: Optional[str] = Field(None, description="The phone number/account ID for the Signal client.")
     
     # We might need to listen on a port for VSock (simulated via TCP in dev)
     vsock_port: int = Field(5000, description="Port for VSock communication")

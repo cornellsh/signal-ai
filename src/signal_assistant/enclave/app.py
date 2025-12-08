@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import struct
+import base64
+import time
 from signal_assistant.enclave.transport import VsockClient
 from signal_assistant.enclave.signal_lib import SignalLib
 from signal_assistant.enclave.kms import NitroKMS
@@ -27,7 +29,8 @@ class EnclaveApp:
         # Crypto setup
         # In real world: Unseal the Master Key
         # The mock KMS just returns input, so we use a dummy key for dev
-        unsealed = self.kms.unseal(b"dummy_sealed_data")
+        # We pass a base64 encoded string because the mock KMS expects to decode it.
+        unsealed = self.kms.unseal(base64.b64encode(b"dummy_sealed_data"))
         self.master_key = b"0" * 32 
         
         self.state_crypto = StateEncryptor(self.master_key)
@@ -79,7 +82,9 @@ class EnclaveApp:
                 state = {}
 
             # Process
-            decrypted_payload = DecryptedPayload(sender=sender, content=text, source_identifier=sender)
+            # SECURITY NOTE: time.time() uses Host time which is untrusted in TEE.
+            # In production, use a secure time source or treat as untrusted.
+            decrypted_payload = DecryptedPayload(sender=sender, content=text, timestamp=int(time.time() * 1000))
             response_text, new_state = await asyncio.to_thread(self.orchestrator.process_message, decrypted_payload, state)
             
             # Encrypt State
