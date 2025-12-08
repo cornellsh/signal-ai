@@ -84,7 +84,6 @@ pip-delete-this-directory.txt
 signal-cli-config/
 site/
 _build/
-openspec/
 AGENTS.md
 agents.md
 CODEX_PROMPT.md
