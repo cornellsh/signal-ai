@@ -6,14 +6,6 @@ authors = ["Signal Assistant Maintainers"]
 readme = "README.md"
 packages = [{include = "signal_assistant", from = "src"}]
 
-[tool.poetry]
-name = "signal-assistant"
-version = "0.1.0"
-description = "A privacy-focused AI assistant for Signal."
-authors = ["Signal Assistant Maintainers"]
-readme = "README.md"
-packages = [{include = "signal_assistant", from = "src"}]
-
 [tool.poetry.dependencies]
 python = "^3.10"
 pydantic = "^2.0"
@@ -30,17 +22,6 @@ cryptography = "^41.0"
 # instructor = "^0.4.0"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.0"
-ruff = "^0.1.0"
-black = "^23.0"
-mypy = "^1.0"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
-signal-assistant = "signal_assistant.cli:main"
 pytest = "^8.0"
 ruff = "^0.1.0"
 black = "^23.0"
