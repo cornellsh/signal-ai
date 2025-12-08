@@ -1,73 +1,42 @@
-import asyncio
-import socket
-import logging
-from typing import Optional
+# src/signal_assistant/enclave/transport.py
+import time
 
-logger = logging.getLogger(__name__)
-
-class VsockClient:
+class SecureChannel:
     """
-    Client running inside the Enclave that connects to the Host.
+    A basic secure channel for communication within the enclave.
+    This is a placeholder and will be expanded with actual cryptographic operations.
     """
-    def __init__(self, port: int = 5000):
-        self.port = port
-        self.reader: Optional[asyncio.StreamReader] = None
-        self.writer: Optional[asyncio.StreamWriter] = None
+    def __init__(self, message_queue_in, message_queue_out):
+        self.message_queue_in = message_queue_in
+        self.message_queue_out = message_queue_out
 
-    async def connect(self):
+    def send(self, data: bytes) -> None:
         """
-        Establishes connection to the Host with retries.
+        Sends data securely. Placeholder for actual implementation.
         """
-        MAX_RETRIES = 5
-        RETRY_DELAY = 1.0
+        print(f"Enclave SecureChannel sending: {data}")
+        self.message_queue_out.append(data)
+        # In a real scenario, this would involve encryption and secure transmission
+        pass
 
-        for attempt in range(MAX_RETRIES):
-            sock = None
-            host = None
-            
-            if hasattr(socket, "AF_VSOCK"):
-                logger.info("VSock support detected.")
-                # Host CID is usually 2 (QEMU/Firecracker default)
-                # Some environments use VMADDR_CID_HOST
-                cid = getattr(socket, "VMADDR_CID_HOST", 2)
-                try:
-                    sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
-                    sock.connect((cid, self.port))
-                except OSError as e:
-                    logger.error(f"Failed to connect via VSock: {e}")
-                    sock = None # Fallback to TCP
-            
-            if sock is None:
-                # Fallback to TCP
-                host = "127.0.0.1"
-                logger.info(f"Connecting via TCP to {host}:{self.port}")
+    def receive(self, timeout=5) -> bytes | None:
+        """
+        Receives data securely. Placeholder for actual implementation.
+        Includes a timeout to prevent indefinite blocking.
+        """
+        start_time = time.time()
+        while not self.message_queue_in:
+            if time.time() - start_time > timeout:
+                print("Enclave SecureChannel receive timed out.")
+                return None
+            time.sleep(0.01) # Small delay to prevent busy-waiting
+        received_data = self.message_queue_in.pop(0)
+        print(f"Enclave SecureChannel received: {received_data}")
+        return received_data
 
-            try:
-                if sock:
-                    self.reader, self.writer = await asyncio.open_connection(sock=sock)
-                else:
-                    self.reader, self.writer = await asyncio.open_connection(host, self.port)
-                logger.info("Connected to Host.")
-                return # Connection successful
-            except Exception as e:
-                logger.warning(f"Failed to connect (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAY)
-                else:
-                    logger.error("Max retries reached. Giving up.")
-                    raise
-
-    async def send(self, data: bytes):
-        if not self.writer:
-            raise RuntimeError("Not connected")
-        self.writer.write(data)
-        await self.writer.drain()
-
-    async def receive(self, n: int) -> bytes:
-        if not self.reader:
-            raise RuntimeError("Not connected")
-        try:
-            return await self.reader.readexactly(n)
-        except asyncio.IncompleteReadError:
-            # Connection closed
-            raise
+    def establish(self) -> bool:
+        """
+        Establishes a secure channel. Placeholder for actual implementation.
+        """
+        print("Enclave SecureChannel established.")
+        return True

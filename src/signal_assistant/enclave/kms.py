@@ -1,37 +1,45 @@
-import logging
-import base64
+# src/signal_assistant/enclave/kms.py
 
-logger = logging.getLogger(__name__)
+import os
+from typing import Dict
 
-class NitroKMS:
+class KeyManager:
     """
-    Mock implementation of AWS Nitro Enclaves KMS / Sealing.
-    In production, this would use the Nitro Secure Module (NSM) API.
+    Manages cryptographic keys securely within the enclave.
+    This is a placeholder for actual secure key management.
     """
     def __init__(self):
-        self.mock_key = b"DEV_KEY_DO_NOT_USE_IN_PROD"
+        self._keys: Dict[str, bytes] = {} # In a real KMS, keys would be stored securely, not in memory
 
-    def seal(self, plaintext: bytes) -> bytes:
+    def generate_key(self, key_id: str) -> bytes:
         """
-        Seals data to the Enclave's identity (PCRs).
+        Generates a new cryptographic key.
         """
-        logger.info("Sealing data (MOCKED)...")
-        # In dev, we just return it, maybe base64 encoded to look 'encrypted'
-        return base64.b64encode(plaintext)
+        if key_id in self._keys:
+            raise ValueError(f"Key with ID '{key_id}' already exists.")
+        
+        # Simulate key generation (e.g., a random byte string)
+        new_key = os.urandom(32) # 32 bytes for a 256-bit key
+        self._keys[key_id] = new_key
+        print(f"Generated key for ID: {key_id}")
+        return new_key
 
-    def unseal(self, ciphertext: bytes) -> bytes:
+    def get_key(self, key_id: str) -> bytes:
         """
-        Unseals data if the Enclave's identity matches.
+        Retrieves a cryptographic key by its ID.
         """
-        logger.info("Unsealing data (MOCKED)...")
-        try:
-            return base64.b64decode(ciphertext)
-        except Exception:
-            logger.error("Failed to unseal data")
-            raise ValueError("Unseal failed")
+        key = self._keys.get(key_id)
+        if key is None:
+            raise KeyError(f"Key with ID '{key_id}' not found.")
+        print(f"Retrieved key for ID: {key_id}")
+        return key
 
-    def get_attestation_doc(self) -> bytes:
+    def delete_key(self, key_id: str) -> None:
         """
-        Returns the signed attestation document from the hypervisor.
+        Deletes a cryptographic key.
         """
-        return b"MOCK_ATTESTATION_DOC"
+        if key_id in self._keys:
+            del self._keys[key_id]
+            print(f"Deleted key for ID: {key_id}")
+        else:
+            raise KeyError(f"Key with ID '{key_id}' not found.")

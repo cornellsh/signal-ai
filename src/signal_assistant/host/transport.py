@@ -1,53 +1,42 @@
-import asyncio
-import socket
-import logging
-from typing import Optional, Callable, Awaitable
-from signal_assistant.config import host_settings
+# src/signal_assistant/host/transport.py
+import time
 
-logger = logging.getLogger(__name__)
-
-class VsockServer:
+class SecureChannel:
     """
-    Async Server running on the Host Sidecar that listens for connections from the Enclave.
-    Supports AF_VSOCK (on Nitro) and AF_INET (fallback for dev).
+    A basic secure channel for communication with the enclave.
+    This is a placeholder and will be expanded with actual cryptographic operations.
     """
-    def __init__(self, port: int = None):
-        self.port = port or host_settings.vsock_port
-        self.server = None
+    def __init__(self, message_queue_in, message_queue_out):
+        self.message_queue_in = message_queue_in
+        self.message_queue_out = message_queue_out
 
-    async def start(self, client_handler: Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]):
+    def send(self, data: bytes) -> None:
         """
-        Starts the asyncio server.
-        client_handler: async function(reader, writer)
+        Sends data securely. Placeholder for actual implementation.
         """
-        sock = None
-        host = None
-        
-        if hasattr(socket, "AF_VSOCK"):
-            logger.info("VSock support detected.")
-            try:
-                sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
-                sock.bind((socket.VMADDR_CID_ANY, self.port))
-                # start_server calls listen() on the socket
-            except OSError as e:
-                logger.error(f"Failed to create VSock socket: {e}. Falling back to TCP.")
-                sock = None
-        
-        if sock is None:
-            # Fallback to TCP
-            host = "127.0.0.1"
-            logger.info(f"Using TCP Fallback on {host}:{self.port}")
+        print(f"Host SecureChannel sending: {data}")
+        self.message_queue_out.append(data)
+        # In a real scenario, this would involve encryption and secure transmission
+        pass
 
-        try:
-            if sock:
-                self.server = await asyncio.start_server(client_handler, sock=sock)
-            else:
-                self.server = await asyncio.start_server(client_handler, host, self.port, reuse_address=True)
-            
-            logger.info(f"Server started on port {self.port}")
-            async with self.server:
-                await self.server.serve_forever()
-                
-        except Exception as e:
-            logger.error(f"Server crashed: {e}", exc_info=True)
-            raise
+    def receive(self, timeout=5) -> bytes | None:
+        """
+        Receives data securely. Placeholder for actual implementation.
+        Includes a timeout to prevent indefinite blocking.
+        """
+        start_time = time.time()
+        while not self.message_queue_in:
+            if time.time() - start_time > timeout:
+                print("Host SecureChannel receive timed out.")
+                return None
+            time.sleep(0.01) # Small delay to prevent busy-waiting
+        received_data = self.message_queue_in.pop(0)
+        print(f"Host SecureChannel received: {received_data}")
+        return received_data
+
+    def establish(self) -> bool:
+        """
+        Establishes a secure channel. Placeholder for actual implementation.
+        """
+        print("Host SecureChannel established.")
+        return True
