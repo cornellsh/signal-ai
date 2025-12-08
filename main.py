@@ -1,4 +1,4 @@
-from signal_ai.cli import main
+from ai_assistant_bot.cli import main
 
 if __name__ == "__main__":
     main()

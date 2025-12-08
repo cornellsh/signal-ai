@@ -1,16 +1,23 @@
 [tool.poetry]
-name = "signal-ai"
+name = "ai-assistant-bot"
 version = "0.1.0"
 description = "Signal bot built on top of the local signal-client."
 authors = ["signal-ai maintainers"]
 readme = "README.md"
 package-mode = true
-packages = [{ include = "signal_ai", from = "src" }]
+packages = [{ include = "ai_assistant_bot", from = "src" }]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<3.14"
+python = ">=3.10,<3.14"
 signal-client = { path = "../signal-client", develop = true }
 redis = ">=5.2.0"
+fastapi = ">=0.103.0"
+uvicorn = { extras = ["standard"], version = ">=0.23.0" }
+python-dotenv = ">=1.0.0"
+pydantic-settings = ">=2.0.0"
+
+instructor = ">=0.5.0"
+SQLAlchemy = ">=2.0.0"
 
 [tool.poetry.group.dev.dependencies]
 black = ">=24.10.0"
@@ -28,6 +35,9 @@ python_version = "3.11"
 ignore_missing_imports = true
 check_untyped_defs = true
 show_error_codes = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

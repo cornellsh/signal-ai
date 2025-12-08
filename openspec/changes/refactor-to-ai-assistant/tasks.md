@@ -4,16 +4,16 @@ This document outlines the ordered tasks to transform the `signal-ai` project in
 
 ## Phase 1: Project Cleanup, Renaming, and Initial Setup
 
-1.  **Cleanup Existing Codebase:**
+1.  [x] **Cleanup Existing Codebase:**
     *   **Description:** Remove all outdated, unused, or "dead" code from the `src/signal_ai/` directory that is not relevant to the new AI assistant bot. This includes old commands, services, and any experimental code from the `signal-client` development phase.
     *   **Validation:** Directory `src/signal_ai/` contains only essential files or empty placeholders.
-2.  **Rename Top-Level Package:**
+2.  [x] **Rename Top-Level Package:**
     *   **Description:** Rename the top-level package from `src/signal_ai` to `src/ai_assistant_bot` to reflect the new project's purpose. Update all internal references accordingly.
     *   **Validation:** All imports and module references are updated, and the project can be built/run without errors (though functionality is minimal at this stage).
-3.  **Update Core Dependencies:**
+3.  [x] **Update Core Dependencies:**
     *   **Description:** Review `pyproject.toml` and `poetry.lock`. Ensure `signal-client` is the latest stable version. Remove any unnecessary development dependencies. Add essential core dependencies for the new architecture (e.g., specific TEE SDK client libraries, database drivers, LLM API client libraries).
     *   **Validation:** `poetry update` runs successfully, and all dependencies are aligned with the new project's needs.
-4.  **Implement Core Configuration:**
+4.  [x] **Implement Core Configuration:**
     *   **Description:** Refine `config.py` to handle environment variables for Signal credentials, AI model API keys, database connections, and TEE attestation service endpoints.
     *   **Validation:** Bot can load configuration correctly from `.env` file.
 
@@ -21,21 +21,21 @@ This document outlines the ordered tasks to transform the `signal-ai` project in
 
 This phase focuses on implementing the critical privacy-preserving components within a simulated TEE environment (for development) and preparing them for a real TEE deployment. These components will eventually form the "open-source privacy core."
 
-5.  **Design and Isolate Privacy Core Logic:**
-    *   **Description:** Define the strict boundaries and APIs for the "Privacy Core" — the minimal set of code responsible for Signal message decryption, initial prompt sanitization (PII stripping), Signal key management, and remote attestation integration. This code must be auditable and designed for TEE execution.
-    *   **Validation:** A clear architectural document (if not already part of `design.md`) detailing the Privacy Core's scope and interfaces exists.
-6.  **Scaffold TEE-Compatible Signal Adapter:**
-    *   **Description:** Implement the `signal_adapter` components (client, events, messages) designed to run within the TEE. This includes the logic for receiving encrypted messages and performing decryption *only within the TEE environment*.
-    *   **Validation:** Placeholder tests verify that message decryption logic is isolated and that Signal keys are not accessible outside this component.
-7.  **Develop Initial Prompt Sanitization (within Privacy Core):**
-    *   **Description:** Implement the logic to detect and strip PII from the decrypted message content *before* it leaves the TEE for external LLM APIs. This will be a core component of the open-source Privacy Core.
-    *   **Validation:** Unit tests demonstrate effective PII stripping for various data types.
+5.  [x] **Design the Privacy Core's Boundaries and APIs:**
+    *   **Description:** Formally define the strict boundaries, interfaces, and APIs for the "Privacy Core." This minimal set of code will be responsible for Signal message decryption, initial prompt sanitization (PII stripping), Signal key management, and remote attestation integration. Document the proposed interfaces.
+    *   **Validation:** A clear architectural document detailing the Privacy Core's scope and interfaces (e.g., a markdown file in the `signal_adapter` or `core` directory) exists and is approved.
+6.  [x] **Implement TEE-Compatible Signal Adapter (Privacy Core Component):**
+    *   **Description:** Based on the Privacy Core API design from Task 5, implement the `signal_adapter` components (client, events, messages) that will run within the TEE. This involves implementing the logic for securely receiving encrypted messages from the Event Processing Layer and performing decryption *only within this TEE-bound adapter*. Develop this against a development mock TEE environment.
+    *   **Validation:** Unit tests verify that message decryption logic is isolated within this component and adheres to the defined Privacy Core API. Signal keys are demonstrably not accessible outside this component.
+7.  **Develop Initial Prompt Sanitization Logic (Privacy Core Component):**
+    *   **Description:** Implement the logic within the Privacy Core to detect and strip PII from the decrypted message content. This process must occur *before* the sanitized prompt leaves the TEE for interaction with external LLM APIs.
+    *   **Validation:** Unit tests demonstrate effective PII stripping for various data types and scenarios, ensuring no PII is inadvertently exposed.
 8.  **Integrate TEE SDK and Attestation Logic (Development Mock):**
-    *   **Description:** Integrate a TEE SDK (or a mock interface for development) to manage the secure enclave. Implement the logic to generate attestation reports containing code measurements.
-    *   **Validation:** A development endpoint can be queried to return a mock attestation report.
-9.  **Secure Key Provisioning Mechanism (Conceptual & Mock):**
-    *   **Description:** Define the conceptual flow for secure initial provisioning of the bot's Signal private key into the TEE, ensuring the developer never has plaintext access. Implement a mock for local testing.
-    *   **Validation:** Documentation for key provisioning process is complete.
+    *   **Description:** Integrate a TEE SDK (or a mock interface for development) to manage the simulated secure enclave environment. Implement logic within the Privacy Core to generate mock attestation reports, including a simulated code measurement based on the Privacy Core's components. This mock should allow for local testing of the attestation process.
+    *   **Validation:** A development endpoint or internal function can be called to return a mock attestation report, which can be verified against a predefined mock hash.
+9.  **Define Secure Key Provisioning Mechanism (Conceptual & Mock):**
+    *   **Description:** Define and document the conceptual flow for securely provisioning the bot's Signal private key into the TEE, ensuring the developer never has plaintext access. This documentation should outline the steps involved and the security considerations. For immediate testing, implement a simple mock mechanism that simulates a secure key load, allowing development of dependent components.
+    *   **Validation:** Comprehensive documentation for the key provisioning process is complete. A basic mock function allows the `signal_adapter` to simulate key loading.
 
 ## Phase 3: Core Bot Functionality (Closed-Source Components)
 
