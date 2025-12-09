@@ -60,11 +60,11 @@ The Signal Assistant system MUST be comprised of strictly defined components, ea
     *   Manage non-sensitive aspects of Signal communication (e.g., webhook registration, basic connection management).
 *   **What it MUST NOT DO:**
     *   Decrypt the Signal protocol encrypted messages or access their plaintext content.
-    *   Access any PII within messages or related metadata.
+    - Persist or log Signal User Identifiers or other PII from network metadata, or inspect such metadata beyond what is strictly necessary for routing and delivery. Any persisted metadata MUST use `internal_user_id` only and MUST NOT contain raw `Signal_ID`s or plaintext content.
     *   Modify Signal-encrypted payloads.
     *   Store any plaintext sensitive data persistently.
 *   **Data Received/Sent:** Signal-encrypted messages (inbound), host-encrypted messages (inbound to Enclave), host-encrypted messages (outbound from Enclave), Signal-encrypted messages (outbound to Signal).
-*   **Raw Content Visibility:** NONE. It MUST only handle encrypted payloads.
+Raw Content Visibility: The Signal Integration Layer MUST NEVER see plaintext user messages or LLM prompts/responses. It WILL see Signal network-level identifiers transiently on the wire for routing and delivery but MUST NOT persist raw `Signal_ID`s at rest or associate them with Host-side operational logs or other stored activity.
 *   **Persistent Storage:** MAY store non-sensitive configuration data (e.g., Signal server endpoint URLs, public keys for attestation verification) not containing secrets. MUST NOT store any sensitive data or PII persistently.
 
 ### 4.2 Host (Untrusted Environment)
@@ -136,7 +136,7 @@ The Signal Assistant system MUST be comprised of strictly defined components, ea
     *   Return responses to the Enclave.
 *   **What it MUST NOT DO:**
     *   Receive unsanitized prompts containing PII from the Enclave.
-    *   Retain prompts or responses beyond immediate processing, unless explicitly agreed upon with strict privacy controls.
+    *   The system MUST only be configured to use LLM providers whose documented data retention and usage policies are compatible with the Data Inventory and privacy posture defined for the Signal Assistant (e.g., no training-on-data or strictly bounded retention). The system MUST NOT intentionally configure providers to retain prompts or responses beyond immediate processing unless such retention has been explicitly risk-assessed, documented in internal privacy/security documentation, and surfaced in user-facing terms.
 *   **Data Received/Sent:** Sanitized LLM prompts (inbound from Enclave), LLM responses (outbound to Enclave).
 *   **Raw Content Visibility:** FULL for the sanitized prompt and response *during processing*.
 *   **Persistent Storage:** Assumed to have its own retention policies, which the Enclave's PII sanitization and data minimization efforts are designed to mitigate against.
@@ -161,7 +161,7 @@ The Signal Assistant SHALL implement a privacy-centric identity and session mode
 *   **Requirement 5.1.1.1:** Each unique Signal User Identifier (UUID, representing a specific Signal account) MUST be mapped to a single, cryptographically secure, random, and opaque `internal_user_id` within the Enclave.
 *   **Requirement 5.1.1.2:** The mapping from Signal User Identifier to `internal_user_id` MUST occur exclusively within the Enclave.
 *   **Requirement 5.1.1.3:** The Enclave MUST store this mapping only within its secure, attested storage.
-*   **Requirement 5.1.1.4:** The Host MUST NEVER see the direct Signal User Identifier in association with user activity or persistent data. The Host SHALL only operate on `internal_user_id` when communicating with the Enclave.
+*   **Requirement 5.1.1.4:** The Host MAY see direct Signal User Identifiers transiently as part of network-layer metadata when communicating with Signal servers, but MUST NEVER store or log them at rest or associate them with Host-side operational logs or other persisted user activity. For all persistent data and all Host–Enclave communication, the Host SHALL only operate on `internal_user_id`.
 *   **Requirement 5.1.1.5:** Multi-device interactions (a single Signal User Identifier interacting from multiple linked devices) SHALL be recognized as originating from the same `internal_user_id`. The system MUST NOT differentiate between a user's linked devices for identity purposes, treating them as extensions of the same user.
 *   **Requirement 5.1.1.6:** If a user reinstalls the Signal application on a device, their Signal User Identifier remains the same, and the existing `internal_user_id` mapping SHALL be used by the Enclave.
 *   **Requirement 5.1.1.7:** If a user changes their phone number but transfers their Signal account, their Signal User Identifier MAY change. The Enclave SHOULD attempt to remap the new Signal User Identifier to the existing `internal_user_id` if verifiable (e.g., via a secure account recovery process initiated by the user). If re-mapping is not possible, the new Signal User Identifier SHALL be treated as a new user with a new `internal_user_id`.
@@ -179,7 +179,10 @@ All per-user state is managed within or secured by the Enclave.
 *   **Requirement 5.2.1.3:** Retention Policy: User configurations and preferences SHALL be retained as long as the `internal_user_id` mapping exists. Upon user deletion, this state MUST be purged.
 
 #### 5.2.2 Conversational Context / Long-Term Memory
-*   **Requirement 5.2.2.1 (Ephemeral Conversational Context):** Limited conversational context (e.g., recent turns, topic tracking) MAY be maintained per `internal_user_id` to provide coherent responses. This context MUST exist only within the Enclave's volatile memory and MUST be ephemeral.
+*   **Requirement 5.2.2.1 (Ephemeral Conversational Context):** Limited conversational context (e.g., recent turns, topic tracking) MAY be maintained per `internal_user_id` to provide coherent responses. The primary representation of this context MUST exist within the Enclave’s volatile memory for active sessions and MUST be treated as ephemeral. If any conversational context/state is persisted beyond ephemeral Enclave memory (e.g., to survive restart or to bridge sessions), it MUST:
+    *   consist only of redacted/sanitized summaries or embeddings equivalent to those permitted for Long-Term Memory,
+    *   be stored encrypted on the Host’s Persistence Layer via the Enclave’s Secure Storage Interface, and
+    *   obey the same sanitization, classification, and retention/deletion policies as Long-Term Memory.
 *   **Requirement 5.2.2.2 (Long-Term Memory Content):** Long-term memory, if implemented, MUST NOT store raw plaintext user messages or LLM responses. Instead, it MAY store:
     *   **Redacted summaries:** Summaries of past interactions where all PII has been removed by the Enclave's PII Sanitizer.
     *   **Semantic embeddings:** Numerical representations of redacted conversations, intended for retrieval or contextualization, generated within the Enclave.
@@ -187,9 +190,10 @@ All per-user state is managed within or secured by the Enclave.
 *   **Requirement 5.2.2.3 (Long-Term Memory PII Classification):** Any data stored as long-term memory MUST be treated as **pseudonymous data**, associated only with the `internal_user_id` and having undergone PII sanitization. It MUST NOT contain direct PII.
 *   **Requirement 5.2.2.4 (Security of Stored Memory):** All long-term memory data MUST be managed securely within the Enclave and stored encrypted on the Host's Persistence Layer via the Enclave's Secure Storage Interface.
 *   **Requirement 5.2.2.5 (Retention and Deletion Policy):**
-    *   Ephemeral conversational context MUST be purged within the Enclave after a short, defined period (e.g., session end or inactivity timeout).
+    *   Ephemeral conversational context MUST be purged within the Enclave after a bounded, implementation-defined but documented timeout (e.g., session end or inactivity timeout). This timeout MUST be on the order of hours, not days (e.g., MUST NOT exceed 24 hours for in-memory context).
     *   Long-term memory, if implemented, SHALL adhere to user-configurable or system-defined retention policies (e.g., 90 days, 180 days). It MUST be automatically pruned or deleted upon expiration of its retention period.
     *   All long-term memory associated with an `internal_user_id` MUST be irrevocably purged upon user deletion.
+    *   Any conversational context/state that is persisted beyond ephemeral Enclave memory MUST be treated as Long-Term Memory for purposes of data classification, sanitization, retention, and deletion.
 
 #### 5.2.3 Task Queues and Rate Limits
 *   **Requirement 5.2.3.1:** Per-user task queues (for asynchronous operations) and rate limits MUST be managed, associated with the `internal_user_id`.
@@ -231,7 +235,7 @@ The Enclave's LLM API Proxy/Client and Assistant Bot Logic MUST collectively man
 ### 7.1 Prompt Construction
 *   **Requirement 7.1.1:** The Assistant Bot Logic (within the Enclave) MUST be responsible for constructing the final prompt sent to the LLM.
 *   **Requirement 7.1.2:** Prompt construction MUST incorporate the user's message, relevant conversational context (if any), and any system-level instructions or guardrails.
-*   **Requirement 7.1.3:** The PII Sanitizer (within the Enclave) MUST process the user's message and any other sensitive data components *before* their inclusion in the final prompt.
+*   **Requirement 7.1.3:** Before any prompt is sent to an external LLM, the Enclave MUST construct the full prompt (including the user’s message, any conversational context, tool outputs, and system instructions) and THEN pass this final, fully assembled prompt string through the PII Sanitizer. The PII Sanitizer MUST remove or redact any PII or user-identifiable attributes from the assembled prompt before it is transmitted to the external LLM.
 *   **Requirement 7.1.4:** The constructed prompt MUST be designed to minimize data exposure to the LLM, sending only information strictly necessary for generating a relevant response.
 
 ### 7.2 Model Selection and Interaction
@@ -273,7 +277,7 @@ The system MUST enforce a strictly controlled data flow to maintain privacy, wit
 *   **Requirement 8.1.8 (LLM Prompting):** The (potentially sanitized) plaintext user message (prompt) MUST be fed to the Enclave's LLM API Proxy/Client.
 
 ### 8.2 LLM Interaction Flow (Enclave to External LLM API)
-*   **Requirement 8.2.1 (Enclave Sends Prompt):** The Enclave's LLM API Proxy/Client MUST make a secure, authenticated call to the external LLM API, sending the PII-sanitized prompt over an encrypted channel (e.g., TLS).
+*   **Requirement 8.2.1 (Enclave Sends Prompt):** The Enclave's LLM API Proxy/Client MUST make a secure, authenticated call to the external LLM API, sending the fully PII-sanitized prompt over an encrypted channel (e.g., TLS).
 *   **Requirement 8.2.2 (External LLM Processing):** The external LLM API MAY process the prompt and generate a response.
 *   **Requirement 8.2.3 (LLM Response to Enclave):** The LLM API MUST return the response over the secure channel to the Enclave. The LLM response MUST exist in plaintext *only within the Enclave's memory*.
 
@@ -368,12 +372,15 @@ Remote attestation provides cryptographic assurance of the Enclave's integrity, 
     *   The Host MUST NOT release sensitive keys or external service credentials (including EAKs) to an Enclave unless its attestation report has been successfully verified against a known set of expected, authorized measurements. This release mechanism MUST ensure that EAKs are delivered to the Enclave in an encrypted, opaque form that the Host cannot decrypt, ensuring Host blindness to the plaintext EAKs.
     *   The Enclave itself MUST use its internally verified attestation state to gate access to its own sealed keys (e.g., ESSKs can only be unsealed if the Enclave's current measurement matches the measurement it was sealed with).
     *   This gating mechanism MUST ensure that only authorized, untampered Enclaves can access and utilize cryptographic keys for their intended purpose.
+    *   There MUST NOT exist any alternative (“debug”, “emergency override”, or similar) key-release path that bypasses attestation measurement checks or allows cryptographic keys (including SPKs, ESSKs, ERKs, and EAKs) to be used by un-attested or unauthorized code. All key access MUST be gated by verified attestation measurements as described above.
 
 ## 10. System-Level Invariants
 
+For the purposes of the invariants below, “sensitive plaintext data” refers to unsanitized user messages and unsanitized LLM prompts/responses that still contain PII or user-identifiable attributes, as well as cryptographic key material. Prompts/responses that have passed the Enclave’s PII Sanitizer and contain no PII are treated as pseudonymous data and are not considered “sensitive plaintext data” in Invariant 10.1.
+
 The following invariants define the immutable properties and guarantees of the Signal Assistant system, ensuring its secure and privacy-preserving operation. These MUST be upheld across all components and during all operational phases.
 
-*   **Invariant 10.1 (Plaintext Confidentiality):** Sensitive plaintext data (user messages, LLM prompts/responses, Signal keys) MUST NEVER exist outside the attested boundary of the Enclave.
+*   **Invariant 10.1 (Plaintext Confidentiality):** Sensitive plaintext data (unsanitized user messages, unsanitized LLM prompts/responses that contain PII or user-identifiable attributes, and cryptographic key material such as Signal keys) MUST NEVER exist outside the attested boundary of the Enclave.
 *   **Invariant 10.2 (Host Blindness):** The Host MUST NEVER see or process plaintext sensitive data. It MUST only handle encrypted payloads when dealing with Enclave-destined or Enclave-originated sensitive information.
 *   **Invariant 10.3 (PII Sanitization Enforcement):** All user-provided content intended for external services (e.g., LLMs) or for persistent storage MUST undergo PII sanitization within the Enclave *before* leaving the Enclave's processing scope.
 *   **Invariant 10.4 (Logging Content Restriction):** Operational logs, both Host and Enclave-derived, MUST NEVER contain plaintext user message content, LLM prompts/responses, or direct Signal IDs. All logged identifiers MUST be `internal_user_id`s or other non-PII pseudonyms.
@@ -384,7 +391,7 @@ The following invariants define the immutable properties and guarantees of the S
 *   **Invariant 10.9 (SLO/SLA Targets - High-Level):**
     *   **Latency:** The median end-to-end latency for a standard user message-response cycle SHOULD be below 2 seconds. Maximum latency SHOULD be below 5 seconds for 99% of requests.
     *   **Availability:** The Signal Assistant service SHOULD aim for 99.9% uptime (excluding planned maintenance).
-    *   **Throughput:** The system SHOULD be capable of processing [N] messages per second per Enclave instance.
+    *   **Throughput:** The system SHOULD be dimensioned to meet a clearly documented, deployment-specific throughput target (messages per second per Enclave instance) defined in separate capacity planning artefacts. This specification does not mandate a specific numeric throughput value.
 
 ## 11. Cross-Cutting Concerns
 
@@ -429,6 +436,8 @@ To uphold privacy and the Host Blindness invariant, all operational logging MUST
     *   Non-sensitive request metadata (e.g., API endpoint invoked without parameters).
     *   Cryptographic operation success/failure.
 
+Logged fields MUST NOT encode, directly or indirectly, reversible or high-fidelity surrogates for plaintext user content, LLM prompts/responses, or Signal User Identifiers (e.g., deterministic hashes or keyed fingerprints of message bodies or `Signal_ID`s). “Non-sensitive request metadata” MUST be low-cardinality fields required for operational monitoring and MUST NOT be constructed from user content or identifiers.
+
 *   **Explicitly Forbidden Log Fields:** Operational logs MUST NEVER include the following sensitive data:
     *   Any plaintext user content (messages, queries, prompts, responses).
     *   LLM prompts or responses, even if sanitized.
@@ -436,3 +445,4 @@ To uphold privacy and the Host Blindness invariant, all operational logging MUST
     *   Any cryptographic key material (plaintext or encrypted).
     *   Any other Personally Identifiable Information (PII) not explicitly allowed.
     *   Direct links or correlations between `internal_user_id` and Signal User Identifiers.
+    *   Any hashed, encrypted, or otherwise encoded representation of plaintext user content or Signal User Identifiers that is intended to act as a stable per-message or per-user fingerprint beyond the already allowed `internal_user_id`.
