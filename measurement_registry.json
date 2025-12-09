@@ -1,5 +1,20 @@
 {
   "schema_version": "1.0",
-  "measurements": [],
-  "signatures": []
+  "measurements": [
+    {
+      "mrenclave": "sha256:dummy_for_test",
+      "version": "1.0.0",
+      "git_commit": "abc1234",
+      "build_timestamp": "2025-12-09T20:50:23.651990Z",
+      "profile": "DEV",
+      "status": "active",
+      "revocation_reason": null
+    }
+  ],
+  "signatures": [
+    {
+      "signature": "ioIMbFpAYMC2XNG7/rJ04YILUq+X8hzLoK0mDO2JDdT3icIeKAWMArfKG1FzQJ9GwwSBzfRooOGeSIijNiGABg==",
+      "algorithm": "ed25519"
+    }
+  ]
 }

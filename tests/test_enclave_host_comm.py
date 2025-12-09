@@ -5,15 +5,16 @@ import time
 import copy # For deepcopying messages to simulate tampering
 import os
 import re
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from signal_assistant.host.proxy import EnclaveProxy
-from signal_assistant.enclave.app import EnclaveApp
-from signal_assistant.enclave.transport import SecureChannel as EnclaveSecureChannel
+from signal_assistant_enclave.app import EnclaveApp
+from signal_assistant_enclave.transport import SecureChannel as EnclaveSecureChannel
 from signal_assistant.host.transport import SecureChannel as HostSecureChannel
-from signal_assistant.enclave.serialization import CommandSerializer # Import for testing serialization directly
-from signal_assistant.enclave.signal_lib import SignalLib # Import for direct testing of SignalLib encryption
-from signal_assistant.enclave.privacy_core.core import IdentityMappingService # Added import
+from signal_assistant_enclave.serialization import CommandSerializer # Import for testing serialization directly
+from signal_assistant_enclave.signal_lib import SignalLib # Import for direct testing of SignalLib encryption
+from signal_assistant_enclave.kms import KeyManager
+from signal_assistant_enclave.privacy_core.core import IdentityMappingService
 
 # These lists will act as our simulated message queues
 host_to_enclave_queue = []
@@ -38,20 +39,32 @@ def setup_enclave_app_module():
     enclave_to_host_queue.clear()
 
     enclave_app_instance = EnclaveApp(host_to_enclave_queue, enclave_to_host_queue)
-    enclave_thread_instance = threading.Thread(target=run_enclave_app_in_thread, args=(enclave_app_instance,))
-    enclave_thread_instance.daemon = True
-    enclave_thread_instance.start()
-    time.sleep(1)  # Give enclave a moment to start
-    yield
-    print("Tearing down EnclaveApp for module...")
-    if enclave_app_instance:
-        enclave_app_instance.stop()
-    if enclave_thread_instance and enclave_thread_instance.is_alive():
-        enclave_thread_instance.join(timeout=2)
     
-    # Cleanup env var
-    if "MOCK_ATTESTATION_FOR_TESTS_ONLY" in os.environ:
-        del os.environ["MOCK_ATTESTATION_FOR_TESTS_ONLY"]
+    # Patch the key_manager for the module-level enclave_app_instance
+    with patch.object(enclave_app_instance, 'key_manager', spec=KeyManager) as mock_key_manager:
+        mock_key_manager.get_key.return_value = os.urandom(32) # Must be 32 bytes for AES-256
+        mock_key_manager.generate_key.return_value = os.urandom(32) # Must be 32 bytes for AES-256
+        mock_key_manager.set_registry_status("active")
+        
+        # Also mock IdentityMappingService to be available
+        with patch.object(enclave_app_instance, 'identity_service', spec=IdentityMappingService) as mock_identity_service:
+            mock_identity_service.map_signal_id_to_internal_id.return_value = "internal-user-mock"
+            mock_identity_service.handle_le_request.return_value = MagicMock(status="DENIED") # Default LE denied
+            
+            enclave_thread_instance = threading.Thread(target=run_enclave_app_in_thread, args=(enclave_app_instance,))
+            enclave_thread_instance.daemon = True
+            enclave_thread_instance.start()
+            time.sleep(1)  # Give enclave a moment to start
+            yield
+        print("Tearing down EnclaveApp for module...")
+        if enclave_app_instance:
+            enclave_app_instance.stop()
+        if enclave_thread_instance and enclave_thread_instance.is_alive():
+            enclave_thread_instance.join(timeout=2)
+        
+        # Cleanup env var
+        if "MOCK_ATTESTATION_FOR_TESTS_ONLY" in os.environ:
+            del os.environ["MOCK_ATTESTATION_FOR_TESTS_ONLY"]
 
 # --- Existing Tests ---
 
@@ -249,7 +262,7 @@ def test_identity_mapping_persistence():
     fixed_key = os.urandom(32)
     
     # Patch KeyManager.generate_key to return the fixed key
-    with patch('signal_assistant.enclave.kms.KeyManager.generate_key', return_value=fixed_key):
+    with patch('signal_assistant_enclave.kms.KeyManager.generate_key', return_value=fixed_key):
         # --- First Enclave Run: Create a mapping ---
         host_to_enclave_q1 = []
         enclave_to_host_q1 = []
@@ -258,7 +271,7 @@ def test_identity_mapping_persistence():
         # Capture original init to avoid recursion
         original_init = IdentityMappingService.__init__
         
-        with patch('signal_assistant.enclave.privacy_core.core.IdentityMappingService.__init__', autospec=True) as mock_init:
+        with patch('signal_assistant_enclave.privacy_core.core.IdentityMappingService.__init__', autospec=True) as mock_init:
             # Define side effect to call original init with modified storage_path
             def side_effect(self, state_encryptor, storage_path="/tmp/enclave_identity.enc"):
                 return original_init(self, state_encryptor, storage_path=temp_state_file)
@@ -266,61 +279,73 @@ def test_identity_mapping_persistence():
             mock_init.side_effect = side_effect
             
             enclave_app1 = EnclaveApp(host_to_enclave_q1, enclave_to_host_q1)
-            enclave_thread1 = threading.Thread(target=run_enclave_app_in_thread, args=(enclave_app1,))
-            enclave_thread1.daemon = True
-            enclave_thread1.start()
-            time.sleep(1) # Give enclave time to start
-            
-            proxy1 = EnclaveProxy(host_to_enclave_q1, enclave_to_host_q1)
-            proxy1.secure_channel.fernet = enclave_app1.secure_channel.cipher_suite # SYNC KEYS
-            
-            sender_id_mock = "mock_sender_id_persist"
-            plaintext_message = "Hello, create my ID!"
-            mock_envelope_bytes = f"{sender_id_mock}:{plaintext_message}".encode('utf-8')
-            payload = {"encrypted_envelope": mock_envelope_bytes}
-            response1 = proxy1.send_command("INBOUND_MESSAGE", payload)
-            
-            # Extract the internal_user_id from the response (UUID format)
-            match = re.search(r"Message processed from ([a-f0-9-]{36})", response1.decode())
-            assert match
-            first_internal_user_id = match.group(1)
-            
-            enclave_app1.stop()
-            enclave_thread1.join(timeout=2)
+            # Ensure enclave_app1 has an active key_manager for IdentityMappingService to init
+            with patch.object(enclave_app1, 'key_manager', spec=KeyManager) as mock_key_manager_app1:
+                mock_key_manager_app1.get_key.return_value = fixed_key
+                mock_key_manager_app1.generate_key.return_value = fixed_key
+                mock_key_manager_app1.set_registry_status("active")
+                
+                enclave_thread1 = threading.Thread(target=run_enclave_app_in_thread, args=(enclave_app1,))
+                enclave_thread1.daemon = True
+                enclave_thread1.start()
+                time.sleep(1) # Give enclave time to start
+                
+                proxy1 = EnclaveProxy(host_to_enclave_q1, enclave_to_host_q1)
+                proxy1.secure_channel.fernet = enclave_app1.secure_channel.cipher_suite # SYNC KEYS
+                
+                sender_id_mock = "mock_sender_id_persist"
+                plaintext_message = "Hello, create my ID!"
+                mock_envelope_bytes = f"{sender_id_mock}:{plaintext_message}".encode('utf-8')
+                payload = {"encrypted_envelope": mock_envelope_bytes}
+                response1 = proxy1.send_command("INBOUND_MESSAGE", payload)
+                
+                # Extract the internal_user_id from the response (UUID format)
+                match = re.search(r"Message processed from ([a-f0-9-]{36})", response1.decode())
+                assert match
+                first_internal_user_id = match.group(1)
+                
+                enclave_app1.stop()
+                enclave_thread1.join(timeout=2)
             
         # --- Second Enclave Run: Verify persistence ---
         host_to_enclave_q2 = []
         enclave_to_host_q2 = []
         
         # Ensure the IdentityMappingService uses the SAME temp file
-        with patch('signal_assistant.enclave.privacy_core.core.IdentityMappingService.__init__', autospec=True) as mock_init:
+        with patch('signal_assistant_enclave.privacy_core.core.IdentityMappingService.__init__', autospec=True) as mock_init:
             def side_effect(self, state_encryptor, storage_path="/tmp/enclave_identity.enc"):
                 return original_init(self, state_encryptor, storage_path=temp_state_file)
             mock_init.side_effect = side_effect
             
             enclave_app2 = EnclaveApp(host_to_enclave_q2, enclave_to_host_q2)
-            enclave_thread2 = threading.Thread(target=run_enclave_app_in_thread, args=(enclave_app2,))
-            enclave_thread2.daemon = True
-            enclave_thread2.start()
-            time.sleep(1) # Give enclave time to start
-            
-            proxy2 = EnclaveProxy(host_to_enclave_q2, enclave_to_host_q2)
-            proxy2.secure_channel.fernet = enclave_app2.secure_channel.cipher_suite # SYNC KEYS
-            
-            # Send another message from the same sender_id
-            plaintext_message2 = "Hello again, I should have the same ID!"
-            mock_envelope_bytes2 = f"{sender_id_mock}:{plaintext_message2}".encode('utf-8')
-            payload2 = {"encrypted_envelope": mock_envelope_bytes2}
-            response2 = proxy2.send_command("INBOUND_MESSAGE", payload2)
-            
-            match2 = re.search(r"Message processed from ([a-f0-9-]{36})", response2.decode())
-            assert match2
-            second_internal_user_id = match2.group(1)
-            
-            assert first_internal_user_id == second_internal_user_id
-            
-            enclave_app2.stop()
-            enclave_thread2.join(timeout=2)
+            # Ensure enclave_app2 has an active key_manager for IdentityMappingService to init
+            with patch.object(enclave_app2, 'key_manager', spec=KeyManager) as mock_key_manager_app2:
+                mock_key_manager_app2.get_key.return_value = fixed_key
+                mock_key_manager_app2.generate_key.return_value = fixed_key
+                mock_key_manager_app2.set_registry_status("active")
+
+                enclave_thread2 = threading.Thread(target=run_enclave_app_in_thread, args=(enclave_app2,))
+                enclave_thread2.daemon = True
+                enclave_thread2.start()
+                time.sleep(1) # Give enclave time to start
+                
+                proxy2 = EnclaveProxy(host_to_enclave_q2, enclave_to_host_q2)
+                proxy2.secure_channel.fernet = enclave_app2.secure_channel.cipher_suite # SYNC KEYS
+                
+                # Send another message from the same sender_id
+                plaintext_message2 = "Hello again, I should have the same ID!"
+                mock_envelope_bytes2 = f"{sender_id_mock}:{plaintext_message2}".encode('utf-8')
+                payload2 = {"encrypted_envelope": mock_envelope_bytes2}
+                response2 = proxy2.send_command("INBOUND_MESSAGE", payload2)
+                
+                match2 = re.search(r"Message processed from ([a-f0-9-]{36})", response2.decode())
+                assert match2
+                second_internal_user_id = match2.group(1)
+                
+                assert first_internal_user_id == second_internal_user_id
+                
+                enclave_app2.stop()
+                enclave_thread2.join(timeout=2)
 
     # Clean up
     if os.path.exists(temp_state_file):

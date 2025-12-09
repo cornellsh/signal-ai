@@ -1,0 +1,3 @@
+[submodule "enclave_package"]
+	path = enclave_package
+	url = https://github.com/cornellsh/signal-assistant-enclave.git

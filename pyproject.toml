@@ -10,22 +10,19 @@ packages = [{include = "signal_assistant", from = "src"}]
 python = ">=3.10,<3.14"
 pydantic = "^2.10"
 pydantic-settings = "^2.6"
+signal-assistant-enclave = { path = "enclave_package", develop = true }
 
 [tool.poetry.group.host.dependencies]
 sqlalchemy = "^2.0"
 websockets = "^14.1"  # For Signal Transport Proxy
 signal-client = "^0.1.0"
 
-[tool.poetry.group.enclave.dependencies]
-openai = "^1.57"
-cryptography = "^44.0"
-# instructor = "^1.6.0"
-
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
 ruff = "^0.8.0"
 black = "^24.10"
 mypy = "^1.13"
+import-linter = "^1.2"
 
 [build-system]
 requires = ["poetry-core"]
@@ -35,4 +32,14 @@ build-backend = "poetry.core.masonry.api"
 signal-assistant = "signal_assistant.cli:main"
 
 [tool.pytest]
-ini_options.pythonpath = ["src"]
+ini_options.pythonpath = ["src", "tools"]
+
+[tool.importlinter]
+root_project_path = "src"
+root_package = "signal_assistant"
+
+[[tool.importlinter.contracts]]
+name = "Enclave cannot import Host"
+type = "forbidden"
+source_modules = ["signal_assistant.enclave"]
+forbidden_modules = ["signal_assistant.host"]

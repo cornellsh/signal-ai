@@ -1,70 +1,106 @@
 #!/usr/bin/env python3
 import json
-import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
+
+from signal_assistant.invariant_manifest import InvariantManifest, CURRENT_INVARIANT_MANIFEST
 
 REGISTRY_PATH = Path(__file__).parent.parent / "measurement_registry.json"
-SANITIZER_PATH = "src/signal_assistant/enclave/privacy_core/sanitizer.py"
 
-def load_registry():
+def load_registry() -> Dict[str, Any]:
     with open(REGISTRY_PATH, "r") as f:
         return json.load(f)
 
-def get_last_active_commit(registry) -> Optional[str]:
-    # Measurements are a list. We assume the last one in the list is the most recent.
-    # Or we verify by version. For simplicity, take the last 'active' one.
+def get_last_active_measurement(registry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     measurements = registry.get("measurements", [])
     for m in reversed(measurements):
         if m["status"] == "active":
-            return m["git_commit"]
+            return m
     return None
 
-def get_file_at_commit(commit: str, path: str) -> str:
-    try:
-        return subprocess.check_output(["git", "show", f"{commit}:{path}"], stderr=subprocess.STDOUT).decode("utf-8")
-    except subprocess.CalledProcessError as e:
-        print(f"Error fetching file at commit {commit}: {e.output.decode()}", file=sys.stderr)
-        return ""
+def compare_manifests(old_manifest: InvariantManifest, current_manifest: InvariantManifest) -> bool:
+    """
+    Compares two InvariantManifests and returns True if current_manifest represents a weakening,
+    False otherwise.
+    """
+    drift_detected = False
+
+    # max_log_level_prod
+    log_level_order = {"DEBUG": 0, "INFO": 1, "WARNING": 2, "ERROR": 3, "CRITICAL": 4}
+    old_level = log_level_order.get(old_manifest.max_log_level_prod, -1)
+    current_level = log_level_order.get(current_manifest.max_log_level_prod, -1)
+    if current_level < old_level: # e.g., INFO (1) -> DEBUG (0)
+        print(f"DRIFT: max_log_level_prod weakened from {old_manifest.max_log_level_prod} to {current_manifest.max_log_level_prod}")
+        drift_detected = True
+
+    # le_response_types
+    if old_manifest.le_response_types != current_manifest.le_response_types:
+        if (frozenset(["BLOCK", "ALLOW"]) <= old_manifest.le_response_types) and \
+           not (frozenset(["BLOCK", "ALLOW"]) <= current_manifest.le_response_types):
+            print(f"DRIFT: le_response_types changed from {old_manifest.le_response_types} to {current_manifest.le_response_types} (removed core types)")
+            drift_detected = True
+        elif not (current_manifest.le_response_types <= old_manifest.le_response_types):
+             # Only if current is not a subset of old (i.e. additions)
+             # And only if no core types were removed (already handled by the first if)
+             print(f"INFO: le_response_types added new types {current_manifest.le_response_types - old_manifest.le_response_types}. Manual review may be required.")
+             # drift_detected remains False for additions that don't weaken existing policies
+
+
+    # pii_sanitization_level
+    sanitization_level_order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+    old_san_level = sanitization_level_order.get(old_manifest.pii_sanitization_level, -1)
+    current_san_level = sanitization_level_order.get(current_manifest.pii_sanitization_level, -1)
+    if current_san_level < old_san_level: # e.g., HIGH (2) -> MEDIUM (1)
+        print(f"DRIFT: pii_sanitization_level weakened from {old_manifest.pii_sanitization_level} to {current_manifest.pii_sanitization_level}")
+        drift_detected = True
+
+    # attestation_required_for_sensitive_keys
+    if old_manifest.attestation_required_for_sensitive_keys and not current_manifest.attestation_required_for_sensitive_keys:
+        print("DRIFT: attestation_required_for_sensitive_keys changed from True to False")
+        drift_detected = True
+
+    # registry_verification_required
+    if old_manifest.registry_verification_required and not current_manifest.registry_verification_required:
+        print("DRIFT: registry_verification_required changed from True to False")
+        drift_detected = True
+        
+    # dangerous_capabilities_allowed_in_prod
+    if not old_manifest.dangerous_capabilities_allowed_in_prod and current_manifest.dangerous_capabilities_allowed_in_prod:
+        print("DRIFT: dangerous_capabilities_allowed_in_prod changed from False to True")
+        drift_detected = True
+
+
+    return drift_detected
 
 def main():
-    print("Checking for Policy Drift in PII Sanitization...")
+    print("Checking for Policy Drift in Invariant Manifest...")
     
     registry = load_registry()
-    last_commit = get_last_active_commit(registry)
+    last_active_measurement = get_last_active_measurement(registry)
     
-    if not last_commit:
-        print("No active measurements found in registry. Skipping baseline check.")
-        # This is strictly speaking a pass since there is no policy to drift from.
+    if not last_active_measurement:
+        print("No active measurements with InvariantManifest found in registry. Skipping baseline check.")
         sys.exit(0)
         
-    print(f"Baseline commit: {last_commit}")
+    print(f"Baseline commit: {last_active_measurement.get('git_commit', 'unknown')} (Profile: {last_active_measurement.get('profile')})")
     
-    old_content = get_file_at_commit(last_commit, SANITIZER_PATH)
-    if not old_content:
-        print("Could not retrieve baseline file.")
-        sys.exit(1)
+    old_manifest_dict = last_active_measurement.get("invariant_manifest")
+    if not old_manifest_dict:
+        print("WARNING: Baseline measurement has no invariant_manifest. Cannot check for drift.")
+        sys.exit(0) # Not a failure, but a warning
         
-    try:
-        with open(SANITIZER_PATH, "r") as f:
-            new_content = f.read()
-    except FileNotFoundError:
-        print(f"Current sanitizer file not found at {SANITIZER_PATH}")
-        sys.exit(1)
+    old_manifest = InvariantManifest.from_dict(old_manifest_dict)
+    current_manifest = CURRENT_INVARIANT_MANIFEST
 
-    # Simple heuristic: Check if count of "REGEX" definitions decreased
-    old_regex_count = old_content.count("_REGEX =")
-    new_regex_count = new_content.count("_REGEX =")
-    
-    print(f"Regex count (Baseline): {old_regex_count}")
-    print(f"Regex count (Current):  {new_regex_count}")
-    
-    if new_regex_count < old_regex_count:
-        print("FAILURE: Potential Policy Drift Detected! Number of Regex definitions decreased.")
+    print(f"\nBaseline Manifest:\n{json.dumps(old_manifest.to_dict(), indent=2)}")
+    print(f"\nCurrent Manifest:\n{json.dumps(current_manifest.to_dict(), indent=2)}")
+
+    if compare_manifests(old_manifest, current_manifest):
+        print("\nFAILURE: Policy Drift Detected! Weakening of invariants found.")
         sys.exit(1)
-        
-    print("SUCCESS: No obvious policy drift detected (regex count stable or increased).")
+    else:
+        print("\nSUCCESS: No policy drift (no weakening of invariants) detected.")
 
 if __name__ == "__main__":
     main()

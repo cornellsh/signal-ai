@@ -3,8 +3,8 @@ import pytest
 import tempfile
 import os
 from unittest.mock import MagicMock
-from signal_assistant.enclave.privacy_core.core import IdentityMappingService, LE_REQUEST_TYPE, LE_RESPONSE
-from signal_assistant.enclave.state_encryption import StateEncryptor
+from signal_assistant_enclave.privacy_core.core import IdentityMappingService, LE_REQUEST_TYPE, LE_RESPONSE
+from signal_assistant_enclave.state_encryption import StateEncryptor
 
 @pytest.fixture
 def mock_state_encryptor():

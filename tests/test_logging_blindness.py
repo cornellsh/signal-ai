@@ -7,10 +7,10 @@ import json
 
 # Assume these modules exist and are the ones using the new logging interfaces
 from signal_assistant.host.logging_client import LoggingClient
-from signal_assistant.enclave.secure_logging import info as secure_info, error as secure_error
+import signal_assistant_enclave.secure_logging as secure_logging
 from signal_assistant.host.proxy import EnclaveProxy # Assuming EnclaveProxy is the Host's interface to Enclave
-from signal_assistant.enclave.app import EnclaveApp # Assuming EnclaveApp is the main Enclave logic
-from signal_assistant.enclave.serialization import CommandSerializer # For serializing/deserializing commands
+from signal_assistant_enclave.app import EnclaveApp # Assuming EnclaveApp is the main Enclave logic
+from signal_assistant_enclave.serialization import CommandSerializer # For serializing/deserializing commands
 
 # --- Test Data ---
 SYNTHETIC_SIGNAL_ID = "signal-id-12345"
@@ -87,7 +87,7 @@ def mock_enclave_app(mock_secure_channel_enclave_side):
         # Mock decrypt_envelope to return synthetic sender and message (as string)
         mock_signal_lib_instance.decrypt_envelope.return_value = (SYNTHETIC_SIGNAL_ID, SYNTHETIC_PII_MESSAGE)
         
-        with patch('signal_assistant.enclave.app.PIISanitizer') as MockPIISanitizer:
+        with patch('signal_assistant_enclave.privacy_core.sanitizer.PIISanitizer') as MockPIISanitizer:
             # When PIISanitizer.sanitize is called, it should return our mocked value
             MockPIISanitizer.sanitize.return_value = EXPECTED_REDACTED_MESSAGE_PARTIAL_NAME
 

@@ -26,7 +26,7 @@ if "SIGNAL_PHONE_NUMBER" not in os.environ:
 # Import application components after environment setup
 from signal_assistant.mocks import MockSignalLib, MockSignalService
 from signal_assistant.host.proxy import SignalProxy
-from signal_assistant.enclave.app import EnclaveApp
+from signal_assistant_enclave.app import EnclaveApp
 import signal_assistant.enclave.signal_lib
 import signal_assistant.enclave.app
 from signal_assistant.config import host_settings, enclave_settings

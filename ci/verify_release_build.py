@@ -8,6 +8,9 @@ import sys
 from pathlib import Path
 from typing import Dict, Any
 
+from signal_assistant.enclave.capabilities import CURRENT_CAPABILITIES
+from signal_assistant.invariant_manifest import CURRENT_INVARIANT_MANIFEST
+
 SRC_DIR = Path("src/signal_assistant")
 
 def compute_mrenclave(src_path: Path) -> str:
@@ -77,6 +80,39 @@ def main():
     # 1. Check constraints
     check_forbidden_patterns(SRC_DIR, args.profile)
     
+    # Check DangerousCapabilities
+    sys.path.append(str(Path("src").resolve()))
+    try:
+        from signal_assistant.enclave.capabilities import CURRENT_CAPABILITIES
+    except ImportError as e:
+        print(f"Error importing capabilities: {e}")
+        sys.exit(1)
+        
+    if args.profile == "PROD":
+        if not CURRENT_CAPABILITIES.is_empty():
+            print(f"VIOLATION: DangerousCapabilities detected in PROD build: {CURRENT_CAPABILITIES}")
+            sys.exit(1)
+    
+    # Run OpenSpec validation
+    print("\nRunning OpenSpec validation...")
+    try:
+        subprocess.run(["openspec", "validate"], check=True, capture_output=True, text=True)
+        print("OpenSpec validation PASSED.")
+    except subprocess.CalledProcessError as e:
+        print(f"OpenSpec validation FAILED: {e.stderr}")
+        sys.exit(1)
+
+    # Run Policy Drift Check
+    print("\nRunning Policy Drift Check...")
+    try:
+        # Assuming policy_drift_check.py is in the tools directory relative to the project root
+        policy_drift_check_script = Path(__file__).parent.parent / "tools" / "policy_drift_check.py"
+        subprocess.run([sys.executable, str(policy_drift_check_script)], check=True, capture_output=True, text=True)
+        print("Policy Drift Check PASSED.")
+    except subprocess.CalledProcessError as e:
+        print(f"Policy Drift Check FAILED: {e.stdout}{e.stderr}")
+        sys.exit(1)
+
     # 2. Compute Measurement
     mrenclave = compute_mrenclave(SRC_DIR)
     print(f"Computed MRENCLAVE: {mrenclave}")
@@ -91,7 +127,8 @@ def main():
         "build_timestamp": "TODO:Timestamp", 
         "profile": args.profile,
         "status": "active",
-        "revocation_reason": None
+        "revocation_reason": None,
+        "invariant_manifest": CURRENT_INVARIANT_MANIFEST.to_dict()
     }
     
     if args.output:

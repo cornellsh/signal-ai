@@ -5,6 +5,9 @@ import sys
 import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives import serialization
+import base64
 
 REGISTRY_PATH = Path(__file__).parent.parent / "measurement_registry.json"
 
@@ -81,6 +84,82 @@ def cmd_list(args):
     for m in measurements:
         print(f"{m['version']:<10} {m['profile']:<8} {m['status']:<10} {m['mrenclave']}")
 
+def cmd_keygen(args):
+    priv_key = ed25519.Ed25519PrivateKey.generate()
+    pub_key = priv_key.public_key()
+    
+    priv_bytes = priv_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+    
+    pub_bytes = pub_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    with open(out_dir / "registry.key", "wb") as f:
+        f.write(priv_bytes)
+    
+    with open(out_dir / "registry.pub", "wb") as f:
+        f.write(pub_bytes)
+        
+    print(f"Keys generated in {out_dir}")
+
+def _get_canonical_bytes(registry):
+    # Canonicalize measurements for signing
+    # Simple approach: serialize the 'measurements' list with sort_keys=True
+    measurements = registry.get("measurements", [])
+    return json.dumps(measurements, sort_keys=True).encode('utf-8')
+
+def cmd_sign(args):
+    registry = load_registry()
+    
+    with open(args.key, "rb") as f:
+        priv_key = serialization.load_pem_private_key(f.read(), password=None)
+    
+    data = _get_canonical_bytes(registry)
+    signature = priv_key.sign(data)
+    
+    sig_b64 = base64.b64encode(signature).decode('utf-8')
+    
+    new_sig_entry = {
+        "signature": sig_b64,
+        "algorithm": "ed25519"
+    }
+    
+    # Overwrite signatures for now
+    registry["signatures"] = [new_sig_entry]
+    
+    save_registry(registry)
+    print("Registry signed.")
+
+def cmd_verify_signature(args):
+    registry = load_registry()
+    if not registry.get("signatures"):
+        print("No signatures found in registry.")
+        sys.exit(1)
+        
+    with open(args.key, "rb") as f:
+        pub_key = serialization.load_pem_public_key(f.read())
+        
+    data = _get_canonical_bytes(registry)
+    
+    # Verify the first signature
+    sig_entry = registry["signatures"][0]
+    sig_bytes = base64.b64decode(sig_entry["signature"])
+    
+    try:
+        pub_key.verify(sig_bytes, data)
+        print("Signature VERIFIED.")
+    except Exception as e:
+        print(f"Signature verification FAILED: {e}")
+        sys.exit(1)
+
 def main():
     parser = argparse.ArgumentParser(description="Manage the Signal Assistant Enclave Measurement Registry")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -103,6 +182,21 @@ def main():
     list_parser = subparsers.add_parser("list", help="List measurements")
     list_parser.add_argument("--all", action="store_false", dest="active_only", help="Show all measurements (including revoked)")
     list_parser.set_defaults(func=cmd_list)
+
+    # Keygen command
+    keygen_parser = subparsers.add_parser("keygen", help="Generate a signing key pair")
+    keygen_parser.add_argument("--out-dir", default=".", help="Directory to output keys")
+    keygen_parser.set_defaults(func=cmd_keygen)
+
+    # Sign command
+    sign_parser = subparsers.add_parser("sign", help="Sign the registry")
+    sign_parser.add_argument("--key", required=True, help="Path to private key")
+    sign_parser.set_defaults(func=cmd_sign)
+
+    # Verify Signature command
+    verify_sig_parser = subparsers.add_parser("verify-signature", help="Verify registry signature")
+    verify_sig_parser.add_argument("--key", required=True, help="Path to public key")
+    verify_sig_parser.set_defaults(func=cmd_verify_signature)
 
     args = parser.parse_args()
     args.func(args)

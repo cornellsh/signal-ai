@@ -3,9 +3,12 @@ import json
 import sys
 from pathlib import Path
 from signal_assistant.host.transport import SecureChannel
-from signal_assistant.enclave.serialization import CommandSerializer
+from signal_assistant_enclave.serialization import CommandSerializer
 from signal_assistant.host.logging_client import LoggingClient
 import asyncio
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives import serialization
+import base64
 
 # Instantiate the logger once per module
 host_logger = LoggingClient("HostApp")
@@ -16,16 +19,43 @@ class RegistryVerifier:
         try:
             # Locate registry at project root
             # src/signal_assistant/host/proxy.py -> ../../../measurement_registry.json
-            registry_path = Path(__file__).resolve().parents[3] / "measurement_registry.json"
+            root_dir = Path(__file__).resolve().parents[3]
+            registry_path = root_dir / "measurement_registry.json"
+            pub_key_path = root_dir / "keys" / "registry.pub"
             
             if not registry_path.exists():
                 host_logger.error(None, f"Registry not found at {registry_path}")
                 return False
+                
+            if not pub_key_path.exists():
+                host_logger.error(None, f"Registry public key not found at {pub_key_path}")
+                return False
             
             with open(registry_path, "r") as f:
                 registry = json.load(f)
+                
+            # Verify signature
+            if not registry.get("signatures"):
+                host_logger.error(None, "Registry has no signatures.")
+                return False
             
-            for m in registry.get("measurements", []):
+            with open(pub_key_path, "rb") as f:
+                pub_key = serialization.load_pem_public_key(f.read())
+            
+            measurements = registry.get("measurements", [])
+            data = json.dumps(measurements, sort_keys=True).encode('utf-8')
+            
+            sig_entry = registry["signatures"][0]
+            sig_bytes = base64.b64decode(sig_entry["signature"])
+            
+            try:
+                pub_key.verify(sig_bytes, data)
+                host_logger.info(None, "Registry signature verified.")
+            except Exception as e:
+                host_logger.error(None, f"Registry signature verification failed: {e}")
+                return False
+            
+            for m in measurements:
                 if m["mrenclave"] == mrenclave:
                     if m["status"] == "active":
                         host_logger.info(None, f"MRENCLAVE {mrenclave} verified against registry. Version: {m.get('version')}")
