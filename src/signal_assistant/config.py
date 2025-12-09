@@ -20,6 +20,9 @@ class EnclaveSettings(BaseSettings):
     
     # AI Configuration
     openai_api_key: SecretStr = Field(..., description="API Key for the LLM provider")
+    
+    # Environment Governance
+    environment: str = Field("DEV", description="Deployment Environment (DEV, TEST, STAGE, PROD)")
 
     model_config = SettingsConfigDict(env_file=".env.enclave", env_file_encoding="utf-8", extra='ignore')
 

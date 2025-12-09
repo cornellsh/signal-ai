@@ -10,6 +10,7 @@ from signal_assistant.enclave.bot.orchestrator import LLMPipeline # Import LLMPi
 from signal_assistant.enclave import secure_logging
 from signal_assistant.enclave.privacy_core.core import IdentityMappingService # Added import
 from signal_assistant.enclave.state_encryption import StateEncryptor # Added import
+from signal_assistant.config import enclave_settings # Import settings
 import json # Import json for json.JSONDecodeError
 
 class EnclaveApp:
@@ -44,6 +45,12 @@ class EnclaveApp:
         self._running = True
         secure_logging.info(None, "EnclaveApp is starting...")
         
+        # Operational Governance Self-Check
+        if enclave_settings and enclave_settings.environment == "PROD":
+            if os.environ.get("MOCK_ATTESTATION_FOR_TESTS_ONLY") == "1":
+                secure_logging.critical(None, "SECURITY VIOLATION: PROD environment detected with MOCK_ATTESTATION enabled. Aborting.")
+                raise RuntimeError("Security Violation: Mock Attestation in PROD")
+
         # Perform attestation verification during startup
         self.attestation_is_verified = self._perform_attestation_verification()
         if not self.attestation_is_verified:

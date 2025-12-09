@@ -1,10 +1,44 @@
 from typing import Any, Dict
+import json
+import sys
+from pathlib import Path
 from signal_assistant.host.transport import SecureChannel
 from signal_assistant.enclave.serialization import CommandSerializer
 from signal_assistant.host.logging_client import LoggingClient
+import asyncio
 
 # Instantiate the logger once per module
 host_logger = LoggingClient("HostApp")
+
+class RegistryVerifier:
+    @staticmethod
+    def verify(mrenclave: str) -> bool:
+        try:
+            # Locate registry at project root
+            # src/signal_assistant/host/proxy.py -> ../../../measurement_registry.json
+            registry_path = Path(__file__).resolve().parents[3] / "measurement_registry.json"
+            
+            if not registry_path.exists():
+                host_logger.error(None, f"Registry not found at {registry_path}")
+                return False
+            
+            with open(registry_path, "r") as f:
+                registry = json.load(f)
+            
+            for m in registry.get("measurements", []):
+                if m["mrenclave"] == mrenclave:
+                    if m["status"] == "active":
+                        host_logger.info(None, f"MRENCLAVE {mrenclave} verified against registry. Version: {m.get('version')}")
+                        return True
+                    else:
+                        host_logger.error(None, f"MRENCLAVE {mrenclave} found but status is '{m['status']}'.")
+                        return False
+            
+            host_logger.error(None, f"MRENCLAVE {mrenclave} not found in registry.")
+            return False
+        except Exception as e:
+            host_logger.error(None, f"Registry verification failed: {e}")
+            return False
 
 class EnclaveProxy:
     """
@@ -63,3 +97,30 @@ class EnclaveProxy:
         except Exception as e:
             host_logger.error(f"Host: Error provisioning EAK to Enclave: {e}")
             return False
+
+class SignalProxy:
+    """
+    Main Host Application logic.
+    """
+    def __init__(self):
+        pass
+
+    async def run(self):
+        host_logger.info(None, "SignalProxy starting...")
+        
+        # Simulate receiving Attestation Report from Enclave
+        # In a real app, we would connect to the enclave first and request it.
+        # For this task, we assume we got it.
+        simulated_mrenclave = "sha256:simulated_mrenclave_for_dev"
+        
+        host_logger.info(None, f"Verifying Enclave Measurement: {simulated_mrenclave}")
+        if not RegistryVerifier.verify(simulated_mrenclave):
+            host_logger.critical(None, "FATAL: Enclave measurement verification failed. The Enclave is not trusted.")
+            # We fail closed.
+            sys.exit(1)
+            
+        host_logger.info(None, "Enclave verified. Establishing connection...")
+        
+        # Keep alive
+        while True:
+            await asyncio.sleep(1)
