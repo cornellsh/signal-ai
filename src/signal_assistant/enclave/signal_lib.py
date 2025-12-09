@@ -1,6 +1,8 @@
 import logging
 from typing import Optional, Tuple
 from .kms import KeyManager
+# from cryptography.fernet import Fernet, InvalidToken # Remove Fernet from SignalLib
+# from signal_assistant.enclave.secure_config import SIGNAL_MESSAGE_KEY # Remove SIGNAL_MESSAGE_KEY from SignalLib
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +14,7 @@ class SignalLib:
     def __init__(self):
         self.initialized = False
         self.key_manager = KeyManager()
+        # self.signal_cipher_suite = Fernet(SIGNAL_MESSAGE_KEY) # Remove Fernet initialization
         try:
             # In a real build, signal_client (compiled python binding) would be available.
             # import signal_client
@@ -49,21 +52,24 @@ class SignalLib:
         """
         Decrypts a raw envelope.
         Returns (sender_id, message_plaintext).
+        This method now expects *plaintext* envelope bytes from the SecureChannel.
         """
-        # TODO: Replace with actual FFI call
-        # if self.initialized:
-        #    return self.client.decrypt(envelope_bytes)
-        
-        # Mock behavior for dev/prototype
-        # Assuming the envelope contains bytes we can just pretend to parse
-        logger.debug(f"Decrypting {len(envelope_bytes)} bytes...")
-        return "+15550000000", "Hello from Mock Signal"
+        logger.debug(f"SignalLib attempting to decrypt envelope: {envelope_bytes[:50]}...")
+        try:
+            # Assuming the envelope bytes directly contain "sender_id:plaintext" for mock
+            decrypted_data = envelope_bytes.decode('utf-8')
+            sender_id, plaintext = decrypted_data.split(":", 1)
+            return sender_id, plaintext
+        except Exception as e:
+            logger.error(f"SignalLib mock decryption failed: {e}", exc_info=True)
+            return None, None
 
     def encrypt_message(self, recipient_id: str, plaintext: str) -> bytes:
         """
         Encrypts a message for a recipient.
-        Returns raw envelope bytes.
+        Returns raw *plaintext* envelope bytes that the SecureChannel will then encrypt.
         """
-        # TODO: Replace with actual FFI call
-        logger.debug(f"Encrypting message for {recipient_id}...")
-        return b"mock_encrypted_envelope"
+        logger.debug(f"SignalLib mock encrypting message for {recipient_id}: {plaintext}")
+        # For mock, we combine recipient and plaintext to simulate an envelope
+        message_to_send = f"mock_sender_id:{plaintext}".encode('utf-8')
+        return message_to_send

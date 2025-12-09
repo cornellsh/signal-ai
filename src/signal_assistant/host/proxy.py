@@ -1,6 +1,9 @@
 # src/signal_assistant/host/proxy.py
 
+from typing import Any, Dict
+
 from signal_assistant.host.transport import SecureChannel
+from signal_assistant.enclave.serialization import CommandSerializer
 
 class EnclaveProxy:
     """
@@ -11,13 +14,14 @@ class EnclaveProxy:
         self.secure_channel = SecureChannel(enclave_to_host_queue, host_to_enclave_queue)
         self.secure_channel.establish()
 
-    def send_command(self, command: str, payload: bytes) -> bytes:
+    def send_command(self, command: str, payload: Dict[str, Any]) -> bytes:
         """
         Sends a command to the enclave and receives a response.
+        Payload is now a dictionary.
         """
-        message = f"{command}:{payload.decode() if payload else ''}".encode()
+        message_bytes = CommandSerializer.serialize(command, payload)
         print(f"Host EnclaveProxy sending command: {command} with payload: {payload}")
-        self.secure_channel.send(message)
+        self.secure_channel.send(message_bytes)
         response = self.secure_channel.receive()
         print(f"Host EnclaveProxy received response: {response}")
         return response
@@ -26,5 +30,5 @@ class EnclaveProxy:
         """
         Fetches the status of the enclave.
         """
-        response = self.send_command("GET_STATUS", b"")
+        response = self.send_command("GET_STATUS", {})
         return f"Enclave Status: {response.decode()}"

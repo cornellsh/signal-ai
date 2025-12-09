@@ -1,5 +1,7 @@
 # src/signal_assistant/host/transport.py
 import time
+from cryptography.fernet import Fernet
+from signal_assistant.enclave.secure_config import SHARED_SYMMETRIC_KEY
 
 class SecureChannel:
     """
@@ -9,19 +11,19 @@ class SecureChannel:
     def __init__(self, message_queue_in, message_queue_out):
         self.message_queue_in = message_queue_in
         self.message_queue_out = message_queue_out
+        self.cipher_suite = Fernet(SHARED_SYMMETRIC_KEY)
 
-    def send(self, data: bytes) -> None:
+    def send(self, plaintext_data: bytes) -> None:
         """
-        Sends data securely. Placeholder for actual implementation.
+        Encrypts and sends data securely.
         """
-        print(f"Host SecureChannel sending: {data}")
-        self.message_queue_out.append(data)
-        # In a real scenario, this would involve encryption and secure transmission
-        pass
+        encrypted_data = self.cipher_suite.encrypt(plaintext_data)
+        print(f"Host SecureChannel sending (encrypted): {encrypted_data}")
+        self.message_queue_out.append(encrypted_data)
 
     def receive(self, timeout=5) -> bytes | None:
         """
-        Receives data securely. Placeholder for actual implementation.
+        Receives and decrypts data securely.
         Includes a timeout to prevent indefinite blocking.
         """
         start_time = time.time()
@@ -30,9 +32,16 @@ class SecureChannel:
                 print("Host SecureChannel receive timed out.")
                 return None
             time.sleep(0.01) # Small delay to prevent busy-waiting
-        received_data = self.message_queue_in.pop(0)
-        print(f"Host SecureChannel received: {received_data}")
-        return received_data
+        
+        encrypted_data = self.message_queue_in.pop(0)
+        print(f"Host SecureChannel received (encrypted): {encrypted_data}")
+        
+        try:
+            decrypted_data = self.cipher_suite.decrypt(encrypted_data)
+            return decrypted_data
+        except Exception as e:
+            print(f"Host SecureChannel decryption failed: {e}")
+            return None
 
     def establish(self) -> bool:
         """
