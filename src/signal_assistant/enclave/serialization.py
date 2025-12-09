@@ -36,9 +36,14 @@ class CommandSerializer:
     @staticmethod
     def _decode_hook(obj):
         """
-        Hook for json.loads to decode base64 strings back to bytes.
+        Hook for json.loads to decode base64 strings back to bytes,
+        and recursively process dictionaries and lists.
         """
-        if isinstance(obj, str) and obj.startswith(BASE64_MARKER):
+        if isinstance(obj, dict):
+            return {k: CommandSerializer._decode_hook(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [CommandSerializer._decode_hook(elem) for elem in obj]
+        elif isinstance(obj, str) and obj.startswith(BASE64_MARKER):
             return base64.b64decode(obj[len(BASE64_MARKER):])
         return obj
 

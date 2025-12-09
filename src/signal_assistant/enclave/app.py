@@ -58,8 +58,10 @@ class EnclaveApp:
             if plaintext_envelope_bytes:
                 # Ensure it's bytes for decrypt_envelope which expects bytes
                 if isinstance(plaintext_envelope_bytes, str):
+                    # This case should ideally not happen with correct CommandSerializer, but added for robustness
                     plaintext_envelope_bytes = plaintext_envelope_bytes.encode('utf-8')
                 sender, decrypted_message = self.signal_lib.decrypt_envelope(plaintext_envelope_bytes)
+                print(f"DEBUG: SignalLib.decrypt_envelope returned sender: {sender}, message: {decrypted_message}") # DEBUG PRINT
                 if sender and decrypted_message:
                     sanitized_message = PIISanitizer.sanitize(decrypted_message)
                     print(f"Decrypted and Sanitized message from {sender}: {sanitized_message}")
@@ -96,6 +98,7 @@ class EnclaveApp:
             if signal_id and encrypted_data_bytes:
                 # Ensure it's bytes for internal use
                 if isinstance(encrypted_data_bytes, str):
+                    # This case should ideally not happen with correct CommandSerializer, but added for robustness
                     encrypted_data_bytes = encrypted_data_bytes.encode('utf-8')
                 print(f"Enclave sending encrypted data for {signal_id} to host storage.")
                 response = f"Encrypted data for {signal_id} sent to host storage.".encode()
