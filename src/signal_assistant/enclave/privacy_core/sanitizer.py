@@ -12,6 +12,11 @@ class SanitizedPrompt:
 class PIISanitizer:
     """
     Responsible for stripping Personally Identifiable Information from text.
+    
+    WARNING: This is a best-effort, regex-based sanitizer. 
+    It is designed to catch obvious PII patterns (emails, phone numbers) to reduce risk.
+    It is NOT a full Named Entity Recognition (NER) system and does NOT guarantee 
+    removal of all PII (e.g., arbitrary names, addresses, nuanced context).
     """
     # Regex for common PII patterns
     # Enhanced Phone Regex: Supports international formats (e.g., +44, dots, spaces)
@@ -25,6 +30,7 @@ class PIISanitizer:
     # Placeholder for a simple name regex. Robust name PII detection is complex and often requires NLP.
     # For now, we'll specifically target "John Doe" as per test expectations.
     # NOTE: This is NOT a general Named Entity Recognizer.
+    # LIMITATION: This will NOT catch other names (e.g. "Jane Smith", "Robert").
     NAME_REGEX = re.compile(r'\bJohn Doe\b', re.IGNORECASE)
 
     @classmethod

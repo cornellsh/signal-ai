@@ -110,3 +110,30 @@ def test_international_phone_number_sanitization(phone_number_text, expected_red
 ])
 def test_name_sanitization(name_text, expected_redaction):
     assert PIISanitizer.sanitize(name_text).content == expected_redaction
+
+def test_uncaught_pii_limitations():
+    """
+    Explicitly documents and tests limitations of the current regex-based sanitizer.
+    We assert that these are NOT redacted to make the limitations visible.
+    """
+    # Names other than "John Doe" are not currently caught
+    text_name = "Jane Smith is going to the store."
+    assert PIISanitizer.sanitize(text_name).content == text_name
+    
+    # Addresses are not currently caught
+    text_address = "I live at 123 Maple Street, Springfield."
+    assert PIISanitizer.sanitize(text_address).content == text_address
+
+    # SSNs are not currently caught (unless they look like phone numbers)
+    # This is a known limitation of the current rule set.
+    text_ssn = "My ID is 123-45-6789" 
+    # Note: Depending on the phone regex, this might actually get caught if it looks like a number.
+    # Our phone regex is: (?<!\w)(?:\+?\d{1,3}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{2,5}[-.\s]?\d{3,5}\b
+    # 123-45-6789 -> 3-2-4 digits. 
+    # The regex part \d{2,5}[-.\s]?\d{3,5} might catch "45-6789".
+    # Let's test the behavior:
+    # If it is NOT redacted, we assert it matches original.
+    # If it IS redacted (as a phone number false positive), that's also "fine" for privacy, but we want to know.
+    # For now, let's assume it might not match perfectly or might match partially.
+    # We'll just document the Arbitrary Name case as the primary limitation.
+

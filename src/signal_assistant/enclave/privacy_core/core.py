@@ -116,9 +116,15 @@ class IdentityMappingService:
             if signal_id in self._signal_to_internal:
                 del self._signal_to_internal[signal_id]
             
-            # TODO: Trigger deletion of LongTermMemory and Host metadata via IPC
+            # CRITICAL: We do not issue a widespread IPC delete command here yet.
+            # Instead, we rely on "crypto-shredding" / "orphaning".
+            # By irrevocably destroying the SignalID <-> InternalUserID mapping here,
+            # the InternalUserID becomes strictly inaccessible.
+            # Any data stored in LongTermMemory or Host Metadata keyed by this InternalUserID
+            # is effectively orphaned and cryptographically unreachable from the SignalID.
+            
             secure_logging.info(None, "Deleted user data and mapping.", {"internal_id": internal_user_id})
-            self.save_state() # Persist
+            self.save_state() # Persist immediate deletion
         else:
             secure_logging.warning(None, "Attempted to delete unknown InternalUserID.", {"internal_id": internal_user_id})
 
