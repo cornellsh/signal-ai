@@ -19,7 +19,7 @@ class SecureChannel:
         """
         encrypted_data = self.cipher_suite.encrypt(plaintext_data)
         print(f"Enclave SecureChannel sending (encrypted): {encrypted_data}")
-        self.message_queue_out.append(encrypted_data)
+        self.message_queue_out.put(encrypted_data)
 
     def receive(self, timeout=5) -> bytes | None:
         """
@@ -33,7 +33,7 @@ class SecureChannel:
                 return None
             time.sleep(0.01) # Small delay to prevent busy-waiting
         
-        encrypted_data = self.message_queue_in.pop(0)
+        encrypted_data = self.message_queue_in.get(timeout=timeout)
         print(f"Enclave SecureChannel received (encrypted): {encrypted_data}")
         
         try:

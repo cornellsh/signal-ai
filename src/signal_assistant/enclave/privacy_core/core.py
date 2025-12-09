@@ -1,5 +1,24 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any, Union, List
+import uuid
+import enum
+from signal_assistant.enclave import secure_logging
+from signal_assistant.enclave.state_encryption import StateEncryptor
+
+# Type aliases for clarity
+SignalID = str
+InternalUserID = str
+
+class LE_REQUEST_TYPE(enum.Enum):
+    GET_EXTERNAL_ID = "GET_EXTERNAL_ID"
+    GET_LOGS = "GET_LOGS"
+    ACCESS_SENSITIVE_DATA = "ACCESS_SENSITIVE_DATA" # Restricted
+
+@dataclass
+class LE_RESPONSE:
+    status: str # "GRANTED" or "DENIED"
+    data: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
 
 @dataclass
 class DecryptedPayload:
@@ -24,6 +43,98 @@ class KeyStore:
             raise RuntimeError("Keys not loaded")
         # Stub decryption
         return encrypted_payload.decode("utf-8", errors="ignore")
+
+class IdentityMappingService:
+    """
+    Manages the mapping between SignalID and InternalUserID strictly within the Enclave.
+    Enforces privacy by ensuring Host only sees InternalUserID.
+    """
+    def __init__(self, state_encryptor: StateEncryptor):
+        self._state_encryptor = state_encryptor
+        # In-memory storage for prototype; in production, this would be encrypted persistence
+        self._signal_to_internal: Dict[SignalID, InternalUserID] = {}
+        self._internal_to_signal: Dict[InternalUserID, SignalID] = {}
+        
+    def map_signal_id_to_internal_id(self, signal_id: SignalID) -> InternalUserID:
+        """
+        Retrieves or creates an InternalUserID for a given SignalID.
+        """
+        if signal_id in self._signal_to_internal:
+            internal_id = self._signal_to_internal[signal_id]
+            secure_logging.debug(None, "Mapped existing external ID to InternalUserID.", {"internal_id": internal_id})
+            return internal_id
+        
+        # Create new mapping
+        internal_id = str(uuid.uuid4())
+        self._signal_to_internal[signal_id] = internal_id
+        self._internal_to_signal[internal_id] = signal_id
+        secure_logging.info(None, "Created new InternalUserID for external ID.", {"internal_id": internal_id})
+        return internal_id
+
+    def delete_user_data(self, internal_user_id: InternalUserID) -> None:
+        """
+        Irrevocably deletes mapping and associated data for a user.
+        """
+        if internal_user_id in self._internal_to_signal:
+            signal_id = self._internal_to_signal[internal_user_id]
+            del self._internal_to_signal[internal_user_id]
+            if signal_id in self._signal_to_internal:
+                del self._signal_to_internal[signal_id]
+            
+            # TODO: Trigger deletion of LongTermMemory and Host metadata via IPC
+            secure_logging.info(None, "Deleted user data and mapping.", {"internal_id": internal_user_id})
+        else:
+            secure_logging.warning(None, "Attempted to delete unknown InternalUserID.", {"internal_id": internal_user_id})
+
+    def _check_le_policy(self, request_type: LE_REQUEST_TYPE, target_id: Union[SignalID, InternalUserID], auth_context: Dict) -> bool:
+        """
+        CHECK_LE_POLICY: Enforces multi-party authorization and default-deny.
+        """
+        # Default DENY
+        decision = False
+        
+        # simulated multi-party authorization check
+        # In reality, this would verify cryptographic signatures from multiple independent parties
+        is_authorized = auth_context.get("is_authorized_multi_party", False)
+        
+        if not is_authorized:
+            secure_logging.warning(None, "LE Policy: Request unauthorized.", {"request_type": request_type.value})
+            return False
+
+        if request_type == LE_REQUEST_TYPE.GET_EXTERNAL_ID:
+            # Allowed if target is InternalUserID and authorized
+            if isinstance(target_id, str): # weak check, strictly should validate format
+                 decision = True
+        elif request_type == LE_REQUEST_TYPE.GET_LOGS:
+             # Allowed if authorized
+             decision = True
+        elif request_type == LE_REQUEST_TYPE.ACCESS_SENSITIVE_DATA:
+             # Explicitly DENY plaintext access even if authorized (privacy invariant)
+             secure_logging.critical(None, "LE Policy: Denied access to sensitive plaintext.")
+             decision = False
+        
+        secure_logging.info(None, f"LE Policy decision: {decision}", {"request_type": request_type.value})
+        return decision
+
+    def handle_le_request(self, request_type: LE_REQUEST_TYPE, target_id: Union[SignalID, InternalUserID], auth_context: Dict) -> LE_RESPONSE:
+        """
+        Handles Law Enforcement requests with strict policy enforcement.
+        """
+        if not self._check_le_policy(request_type, target_id, auth_context):
+            return LE_RESPONSE(status="DENIED", reason="Policy verification failed or unauthorized request type.")
+
+        if request_type == LE_REQUEST_TYPE.GET_EXTERNAL_ID:
+            # target_id is expected to be InternalUserID
+            if target_id in self._internal_to_signal:
+                return LE_RESPONSE(status="GRANTED", data={"external_id": self._internal_to_signal[target_id]})
+            else:
+                return LE_RESPONSE(status="DENIED", reason="User not found.")
+                
+        elif request_type == LE_REQUEST_TYPE.GET_LOGS:
+            # Return limited logs (mocked)
+            return LE_RESPONSE(status="GRANTED", data={"logs": ["log_entry_1", "log_entry_2"]})
+            
+        return LE_RESPONSE(status="DENIED", reason="Unsupported request type.")
 
 class PrivacyCore:
     def __init__(self):

@@ -1,51 +1,60 @@
-# src/signal_assistant/host/transport.py
+import json
+from queue import Queue
+from typing import Any, Dict, Optional
 import time
+
 from cryptography.fernet import Fernet
-from signal_assistant.enclave.secure_config import SHARED_SYMMETRIC_KEY
+
+from signal_assistant.host.logging_client import LoggingClient
+
+# Instantiate the logger once per module
+host_logger = LoggingClient("HostApp")
 
 class SecureChannel:
     """
-    A basic secure channel for communication with the enclave.
-    This is a placeholder and will be expanded with actual cryptographic operations.
+    Simulates a secure communication channel between the Host and the Enclave.
+    Messages are encrypted/decrypted using Fernet for confidentiality.
     """
-    def __init__(self, message_queue_in, message_queue_out):
-        self.message_queue_in = message_queue_in
-        self.message_queue_out = message_queue_out
-        self.cipher_suite = Fernet(SHARED_SYMMETRIC_KEY)
+    def __init__(self, inbound_queue: Queue, outbound_queue: Queue):
+        self.inbound_queue = inbound_queue
+        self.outbound_queue = outbound_queue
+        self.fernet = self._generate_or_load_key()
 
-    def send(self, plaintext_data: bytes) -> None:
+    def _generate_or_load_key(self) -> Fernet:
         """
-        Encrypts and sends data securely.
+        Generates a new Fernet key or loads an existing one.
+        In a real scenario, this key management would be much more secure
+        and involve KMS/attestation.
         """
-        encrypted_data = self.cipher_suite.encrypt(plaintext_data)
-        print(f"Host SecureChannel sending (encrypted): {encrypted_data}")
-        self.message_queue_out.append(encrypted_data)
-
-    def receive(self, timeout=5) -> bytes | None:
-        """
-        Receives and decrypts data securely.
-        Includes a timeout to prevent indefinite blocking.
-        """
-        start_time = time.time()
-        while not self.message_queue_in:
-            if time.time() - start_time > timeout:
-                print("Host SecureChannel receive timed out.")
-                return None
-            time.sleep(0.01) # Small delay to prevent busy-waiting
-        
-        encrypted_data = self.message_queue_in.pop(0)
-        print(f"Host SecureChannel received (encrypted): {encrypted_data}")
-        
-        try:
-            decrypted_data = self.cipher_suite.decrypt(encrypted_data)
-            return decrypted_data
-        except Exception as e:
-            print(f"Host SecureChannel decryption failed: {e}")
-            return None
+        # For simulation, we generate a new key each time.
+        # In production, this would be loaded securely.
+        return Fernet(Fernet.generate_key())
 
     def establish(self) -> bool:
         """
         Establishes a secure channel. Placeholder for actual implementation.
         """
-        print("Host SecureChannel established.")
+        host_logger.info("Host SecureChannel established.")
         return True
+
+    def send(self, data: bytes):
+        """
+        Encrypts data and sends it to the outbound queue (towards Enclave).
+        """
+        encrypted_data = self.fernet.encrypt(data)
+        host_logger.debug("Host SecureChannel sending (encrypted data)", metadata={"data_len": len(encrypted_data)})
+        self.outbound_queue.put(encrypted_data)
+
+    def receive(self, timeout: int = 5) -> Optional[bytes]:
+        """
+        Receives encrypted data from the inbound queue (from Enclave) and decrypts it.
+        """
+        try:
+            encrypted_data = self.inbound_queue.get(timeout=timeout)
+            host_logger.debug("Host SecureChannel received (encrypted data)", metadata={"data_len": len(encrypted_data)})
+            decrypted_data = self.fernet.decrypt(encrypted_data)
+            return decrypted_data
+        except Exception as e:
+            host_logger.warning("Host SecureChannel receive timed out.")
+            host_logger.error(f"Host SecureChannel decryption failed: {e}", metadata={"exception": str(e)})
+            return None

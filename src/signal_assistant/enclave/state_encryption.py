@@ -1,10 +1,8 @@
 import json
 import os
-import logging
-from typing import Dict, Any
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-logger = logging.getLogger(__name__)
+from typing import Dict, Any # Added missing import
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM # Added missing import
+from signal_assistant.enclave import secure_logging # Added new logging import
 
 class StateEncryptor:
     """
@@ -29,7 +27,7 @@ class StateEncryptor:
             ciphertext = self.aesgcm.encrypt(nonce, data, None)
             return nonce + ciphertext
         except Exception as e:
-            logger.error(f"Encryption failed: {e}")
+            secure_logging.error(None, f"Encryption failed: {e}", {"exception": str(e)}) # Replaced logger.error
             raise
 
     def decrypt(self, blob: bytes) -> Dict[str, Any]:
@@ -44,6 +42,6 @@ class StateEncryptor:
             plaintext = self.aesgcm.decrypt(nonce, ciphertext, None)
             return json.loads(plaintext.decode('utf-8'))
         except Exception as e:
-            logger.error(f"Decryption failed: {e}")
+            secure_logging.error(None, f"Decryption failed: {e}", {"exception": str(e)}) # Replaced logger.error
             # If we cannot decrypt, it usually means the key changed or data is corrupted.
             raise
