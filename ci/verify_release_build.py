@@ -13,6 +13,13 @@ from signal_assistant.invariant_manifest import CURRENT_INVARIANT_MANIFEST
 
 SRC_DIR = Path("src/signal_assistant")
 
+
+def normalize_tag(version: str) -> str:
+    normalized = version.strip()
+    if normalized.startswith("v"):
+        return normalized
+    return f"v{normalized}"
+
 def compute_mrenclave(src_path: Path) -> str:
     """
     Simulates MRENCLAVE computation by hashing all files in src/signal_assistant.
@@ -129,60 +136,83 @@ def check_enclave_registry_consistency(enclave_submodule_path: Path, registry_pa
         print(f"ERROR: Could not read {registry_path}: {e}")
         sys.exit(1)
 
-    # Assuming the first measurement entry is for the enclave for now.
-    # This might need refinement if there are multiple entries and a specific way to identify the enclave.
-    enclave_entry = None
-    for entry in registry_data.get("measurements", []):
-        if "signal-assistant-enclave" in entry.get("name", "").lower() or "enclave" in entry.get("name", "").lower() or "enclave" in entry.get("mrenclave", "").lower():
-            enclave_entry = entry
-            break
-    
-    if enclave_entry is None:
-        print(f"WARNING: No explicit 'signal-assistant-enclave' entry found in {registry_path}. Skipping detailed consistency check.")
-        # If no specific entry, we might not want to fail, but warn.
-        # This could be a point for future refinement in the spec.
+    measurements = registry_data.get("measurements", [])
+    if not measurements:
+        print(f"WARNING: No measurements defined in {registry_path}.")
         return
 
-    registry_git_commit = enclave_entry.get("git_commit")
-    registry_version = enclave_entry.get("version")
-
-    if not registry_git_commit or not registry_version:
-        print(f"VIOLATION: Enclave entry in {registry_path} is missing 'git_commit' or 'version'.")
-        sys.exit(1)
-
     submodule_commit = get_submodule_commit(enclave_submodule_path)
+    head_entry = None
 
-    if registry_git_commit != submodule_commit:
-        print(f"VIOLATION: Git commit mismatch for enclave submodule.")
-        print(f"  Registry git_commit: {registry_git_commit}")
-        print(f"  Submodule HEAD commit: {submodule_commit}")
-        sys.exit(1)
-    
-    # Verify the version against git tags in the submodule repository
-    try:
-        # Fetch tags from the submodule's remote to ensure we have all tags
-        subprocess.run(["git", "fetch", "--tags"], cwd=enclave_submodule_path, check=True, capture_output=True, text=True)
-        # Check if the registry_version corresponds to a valid tag
-        tags_output = subprocess.check_output(
-            ["git", "tag", "--points-at", submodule_commit],
-            cwd=enclave_submodule_path
-        ).decode().strip().split('\n')
-        
-        valid_tag_found = False
-        for tag in tags_output:
-            if tag.strip() == registry_version:
-                valid_tag_found = True
-                break
+    def _commit_exists(commit: str) -> bool:
+        try:
+            subprocess.run(
+                ["git", "cat-file", "-t", commit],
+                cwd=enclave_submodule_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
 
-        if not valid_tag_found:
-            print(f"VIOLATION: Version '{registry_version}' in {registry_path} does not correspond to a tag pointing at submodule commit '{submodule_commit}'.")
+    def _tags_for_commit(commit: str) -> list[str]:
+        try:
+            output = subprocess.check_output(
+                ["git", "tag", "--points-at", commit],
+                cwd=enclave_submodule_path,
+                text=True,
+            )
+            return [tag.strip() for tag in output.splitlines() if tag.strip()]
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: Could not query tags for commit {commit}: {e}")
+            print(f"Stderr: {e.stderr}")
             sys.exit(1)
 
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: Could not verify git tag for submodule {enclave_submodule_path}: {e}")
-        print(f"Stderr: {e.stderr}")
+    for entry in measurements:
+        name = entry.get("name", "unnamed-enclave-measurement")
+        git_commit = entry.get("git_commit")
+        version = entry.get("version")
+        status = entry.get("status", "unknown").lower()
+
+        print(f"Verifying measurement '{name}' ({version}) -> commit {git_commit} [{status}]")
+
+        if not git_commit or not version:
+            print(f"VIOLATION: Measurement '{name}' is missing git_commit or version.")
+            sys.exit(1)
+
+        if not _commit_exists(git_commit):
+            print(f"VIOLATION: Commit {git_commit} from measurement '{name}' is not available in {enclave_submodule_path}.")
+            sys.exit(1)
+
+        if git_commit == submodule_commit:
+            head_entry = entry
+
+        if status == "active":
+            tags = _tags_for_commit(git_commit)
+            if not tags:
+                print(f"VIOLATION: No git tags point to commit {git_commit} for measurement '{name}'.")
+                sys.exit(1)
+            expected_tags = {version.strip(), normalize_tag(version)}
+            if entry.get("tag"):
+                expected_tags.add(entry["tag"].strip())
+
+            matched = set(tags) & expected_tags
+            if not matched:
+                print(f"VIOLATION: Measurement '{name}' (version {version}) is not represented by a tag pointing at {git_commit}.")
+                print(f"Available tags: {tags}")
+                print(f"Expected tags: {sorted(expected_tags)}")
+                sys.exit(1)
+            print(f"  Measurement '{name}' matches tags {sorted(matched)}.")
+
+    if head_entry is None:
+        print(f"VIOLATION: Enclave submodule commit {submodule_commit} is not tracked in {registry_path}.")
         sys.exit(1)
 
+    if head_entry.get("status", "").lower() != "active":
+        print(f"VIOLATION: Enclave submodule commit {submodule_commit} maps to a measurement entry with status '{head_entry.get('status')}'. It must be 'active'.")
+        sys.exit(1)
 
     print(f"Measurement registry consistency check PASSED for enclave submodule.")
 

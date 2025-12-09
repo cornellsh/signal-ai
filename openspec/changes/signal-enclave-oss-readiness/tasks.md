@@ -25,3 +25,11 @@ This document outlines the high-level tasks required to achieve OSS readiness fo
 6.  **Develop Enclave Versioning Helper Script/Doc (Host Repo)**
     *   **Description**: Create a small helper script or detailed documentation in the host repo describing the workflow for bumping enclave versions, cutting new tags, regenerating candidate registry entries, and updating the `measurement_registry.json` and submodule pointer.
     *   **Validation**: The script/documentation clearly outlines the process and enables a user to perform the versioning workflow successfully.
+
+## Checklist
+- [x] Draft and refine the enclave README, SECURITY, CONTRIBUTING, and LICENSE files so the public repo is documentation-ready.
+- [x] Add the enclave-specific GitHub Actions workflow tied to `poetry install`, `pytest`, `ruff`, and `mypy`.
+- [x] Define the SemVer tagging strategy in project docs and emphasize the `tag` → `version` mapping.
+- [x] Update host-facing `docs/enclave_integration.md` and `docs/release_process.md` to spell out the two-repo model, canonical files, and trust story.
+- [x] Harden `ci/verify_release_build.py` (and related scripts) so host CI fails when `measurement_registry.json` references non-existent tags/commits.
+- [x] Capture the release/registry workflow in `docs/enclave_version_management.md` so operators can bump versions reliably.

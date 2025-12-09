@@ -2,88 +2,50 @@
 
 ## 1. Two-Repo Model and Rationale
 
-The `signal-assistant` project employs a two-repository model to manage its core components:
+The project deliberately splits into two repositories so that the sensitive enclave code can remain transparent, auditable, and independently released while the Signal-aware host remains private and focused on orchestration, governance, and operational tooling.
 
-*   **`signal-assistant-enclave` (Public Repository):** This repository contains the sensitive, privacy-preserving core logic of the Signal Assistant. It is maintained as an open-source project to ensure transparency, community scrutiny, and auditable security. All changes to the core enclave implementation *must* originate from this public repository.
-*   **`signal-ai` (Private Repository):** This repository contains the host application code, governance tooling, the `measurement_registry.json` file, attestation and enforcement logic, and the OpenSpec change management system. It consumes the `signal-assistant-enclave` as a Git submodule.
+* **`signal-assistant-enclave` (Public Repository)** operates as the open-source enclave artifact. Its intended audience is auditors, security researchers, and integrators who want to understand or reuse the privacy-preserving logic without access to the private host. It contains the TEE implementation, the privacy core, the sanitizers, governance checks, and the enclave-specific tests described in `README.md`, `SECURITY.md`, and `CONTRIBUTING.md`.
+* **`signal-ai` (Private Host Repository)** is intended for internal developers and operators. It owns Signal integration, host-side persistence, the `measurement_registry.json` specimen, the OpenSpec change system, and the deployment/configuration automation that binds a host build to an attested enclave release.
 
-**Rationale for this model:**
+This separation: (1) keeps the enclave boundary auditable, (2) prevents unsanctioned edits inside the private host, and (3) enables the host to treat the enclave as a cryptographically measured dependency.
 
-*   **Enforce Open-Source Boundary:** Ensures the enclave remains transparent and prevents "hidden forks" or divergent code within the private host. All security-critical code changes are public.
-*   **Reproducible Enclave Builds:** Guarantees that the enclave used by `signal-ai` is built from a stable, versioned, and auditable commit from the public repository, enhancing trust and verification.
-*   **Avoid Local Edits:** Prevents unmanaged modifications to enclave code within `signal-ai`. All enclave code changes are funneled through a controlled public process.
-*   **Clear API Contract:** Establishes a minimal, well-defined public API for the enclave, restricting host access to internal implementation details and enhancing modularity and security.
+## 2. Canonical Sources & OpenSpec
 
-## 2. Workflow for Proposing/Implementing Changes in `signal-assistant-enclave`
+The host repository defines the truth for privacy/invariant governance. Auditors and contributors should reference the following canonical sources:
 
-All development for the `signal-assistant-enclave` core functionality occurs in its dedicated public repository.
+* `docs/signal_assistant_core.md`
+* `docs/privacy_architecture.md`
+* `invariant_manifest.py`
+* `measurement_registry.json`
 
-1.  **Propose Change:** Submit a detailed proposal (e.g., design document, issue) to the `signal-assistant-enclave` public repository, outlining the change, its rationale, and any security implications.
-2.  **Develop & Test:** Implement the change within a feature branch in the `signal-assistant-enclave` repository. Ensure comprehensive unit and integration tests are written and pass.
-3.  **Code Review:** Submit a Pull Request (PR) for review by maintainers and the community. This review process focuses heavily on security, correctness, and adherence to design principles.
-4.  **Merge:** Once approved, the changes are merged into the `main` branch of the `signal-assistant-enclave` repository.
-5.  **Release & Tag:** For production-ready changes, create a new semantic version tag (e.g., `v1.0.0`) on the `main` branch. This tag signifies a stable release point.
+Changes that affect these resources must be proposed via OpenSpec (`openspec/changes/`) so that there is an auditable trail linking spec revisions to new enclave releases. Documenting this requirement inside `CONTRIBUTING.md` and `SECURITY.md` helps reinforce the invariant-preserving workflow.
 
-## 3. Process for Updating `signal-ai` Host to a New Enclave Version
+## 3. Workflow for Proposing or Implementing Enclave Changes
 
-When a new version of `signal-assistant-enclave` is released (i.e., tagged in its public repository), the `signal-ai` host needs to be updated to consume it.
+1. Propose your change in the enclave repo (issue, doc, etc.). Reflect the same intent in an OpenSpec change inside the private host repo if it touches invariants, attestation, or the trust story.
+2. Implement and test the enclave change. The enclave-specific CI (`.github/workflows/ci.yml`) runs `poetry install`, `pytest`, `ruff`, and `mypy` to validate the enclave in isolation.
+3. Once the enclave change is ready, create a `vX.Y.Z` git tag whose version matches the `pyproject.toml` version.
+4. Run the host release tooling (`ci/verify_release_build.py` and `tools/registry.py`) to compute the `mrenclave`, produce a candidate registry entry, and capture the mapping between the tag, commit, and measurement.
+5. Update the host documentation and release notes so auditors know which `measurement_registry.json` entry pairs with the new tag and what OpenSpec change request authorized it.
 
-1.  **Update Submodule:**
-    *   Navigate to the `signal-ai` repository.
-    *   Update the `enclave_package` submodule to the desired new commit (usually the commit corresponding to the latest tag):
-        ```bash
-        git submodule update --remote enclave_package
-        # Or, to pin to a specific commit/tag:
-        cd enclave_package
-        git checkout <new_enclave_commit_sha_or_tag>
-        cd ..
-        git add enclave_package
-        ```
-    *   Verify that the submodule is pointing to the correct commit:
-        ```bash
-        git submodule status enclave_package
-        ```
+This document also serves as a guide to understanding how the public enclave code, the measurement registry, and the host infrastructure fit together, even though the host remains private.
 
-2.  **Update `measurement_registry.json`:**
-    *   Edit the `measurement_registry.json` file in the `signal-ai` repository.
-    *   Locate the entry for `signal-assistant-enclave`. If one doesn't exist, create it following existing patterns.
-    *   Update the `git_commit` field to the exact SHA of the commit the `enclave_package` submodule is currently pinned to.
-    *   Update the `version` field to the semantic version string (e.g., "1.0.0") corresponding to the tag.
-    *   Example `measurement_registry.json` entry:
-        ```json
-        {
-            "name": "signal-assistant-enclave",
-            "mrenclave": "sha256:...",
-            "version": "1.2.3",
-            "git_commit": "abcdef1234567890abcdef1234567890abcdef12",
-            "build_timestamp": "2025-01-01T12:00:00Z",
-            "profile": "PROD",
-            "status": "active",
-            "revocation_reason": null
-        }
-        ```
+## 4. Process for Updating `signal-ai` to a New Enclave Version
 
-3.  **Run CI/CD Checks:**
-    *   Commit both the updated `enclave_package` submodule reference and the `measurement_registry.json` changes.
-    *   Push the changes to a new branch and open a Pull Request in the `signal-ai` repository.
-    *   The CI/CD pipeline will automatically run checks, including:
-        *   **Dirty Submodule Check:** Ensures `enclave_package` is clean and properly pinned.
-        *   **Forbidden Imports Check:** Prevents host code from importing internal enclave modules.
-        *   **Registry Consistency Check:** Verifies that `measurement_registry.json` matches the submodule's pinned commit and version tag.
-        *   **OpenSpec Validation:** Ensures compliance with current OpenSpecs.
-        *   **Policy Drift Check:** Verifies other governance invariants.
-    *   All CI checks must pass before the PR can be merged.
+1. **Update the Submodule:** After the enclave publishes a new tag, update the `enclave_package` submodule to the tagged commit, verify the clean state, and commit the change in the host repo.
+2. **Record the Measurement:** Run `tools/registry.py add` (with `--name signal-assistant-enclave` and `--tag vX.Y.Z`) to insert the `mrenclave`, `version`, `tag`, `git_commit`, and profile into `measurement_registry.json`. This step guarantees that the host has a persistent, human-readable pointer to the enclave tag referenced in CI and production.
+3. **Cross-Check:** Host CI uses `ci/verify_release_build.py` to confirm that every active entry in `measurement_registry.json` references a real git tag that points to the recorded commit. If any active entry fails this check, the CI run fails and prevents merging the release.
+4. **Enforce Governance:** The host remains responsible for enforcing the registry and invariant model. It must never import enclave internals directly (`ci/static_analysis/check_enclave_imports.py`) and must treat `measurement_registry.json` as the authoritative source of truth for attested enclave code.
+5. **Document the Trust Story:** Keep `docs/enclave_integration.md`, `docs/release_process.md`, and `docs/enclave_version_management.md` updated so external parties know how to trace a running enclave back to its git tags, OpenSpec change, and registry entry.
 
-4.  **Deploy:** Once the PR is merged and all checks pass, the `signal-ai` host can be safely deployed with the new enclave version.
+## 5. Trust Story for Third-Party Auditors
 
-## 4. Trust and Attestation Story
+Auditors who want to verify the enclave can follow these steps:
 
-The integration of `signal-assistant-enclave` as a submodule, combined with rigorous CI/CD checks and `measurement_registry.json` management, forms the foundation of our trust and attestation story:
+1. **Obtain an Attestation Quote:** Capture the enclave’s `mrenclave` from the attested runtime (real TEE or simulation). This measurement is the cryptographic anchor of the enclave.
+2. **Consult `measurement_registry.json`:** Look up the measurement entry (typically the most recent `status: active` entry). It now includes `name`, `version`, `tag`, `git_commit`, and `profile`, which lets the auditor confirm the identity of the enclave and the intended deployment profile.
+3. **Map to a Git Tag:** Use the recorded `tag` (or the normalized `vX.Y.Z` version) to check out the `signal-assistant-enclave` repository at that tag. Inspect `README.md`, `SECURITY.md`, and `CONTRIBUTING.md` to understand how the enclave was built and what behaviors are expected.
+4. **Verify OpenSpec Traceability:** The `tag` should correspond to an OpenSpec change in the private host repo. That change ensures the invariant and governance context is documented for audit trails and release notes.
+5. **Check Host CI Guards:** When the host builds with this enclave, `ci/verify_release_build.py` runs. It guarantees that the submodule commit is recorded in `measurement_registry.json`, that the commit status remains `active`, and that the measurement entry references a `vX.Y.Z` tag. Any deviation results in a CI failure.
 
-*   **Transparency and Auditability:** The enclave's open-source nature and public change workflow ensure that its entire history and implementation are transparent and auditable.
-*   **Immutable References:** By pinning the `enclave_package` submodule to specific, cryptographically signed (via git commits) versions and recording these in `measurement_registry.json`, we create an immutable record of the exact enclave code used in any given `signal-ai` build.
-*   **Build-Time Enforcement:** The CI checks actively enforce the intended separation of concerns and versioning invariants at build time, preventing misconfigurations or unauthorized modifications from reaching production.
-*   **Measurement and Attestation (Future/External):** The `mrenclave` field in `measurement_registry.json` represents the cryptographic measurement of the enclave. In a full Trusted Execution Environment (TEE) setup (e.g., Intel SGX, AMD SEV), this `mrenclave` would be generated by the TEE's measurement process and used for remote attestation. This allows external parties to verify that the correct and expected enclave code is running in a secure environment. The `git_commit` and `version` provide human-readable and verifiable links back to the exact source code that produced that `mrenclave`.
-*   **Policy Enforcement:** The `invariant_manifest` (and other checks like Policy Drift) ensures that the entire system, including the host and enclave, adheres to predefined security and privacy policies.
-
-This layered approach ensures a high degree of assurance regarding the integrity and provenance of the `signal-assistant-enclave` within the broader `signal-ai` system.
+This layered process ensures that every deployed enclave can be traced to a public tag, a registry entry, and a documented change request, satisfying auditors' expectations while keeping the host boundary private.

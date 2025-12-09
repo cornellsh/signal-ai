@@ -26,6 +26,8 @@ Run the registry tool to add the measurement:
 
 ```bash
 python3 tools/registry.py add \
+  --name "signal-assistant-enclave" \
+  --tag "v1.2.0" \
   --mrenclave "sha256:..." \
   --version "1.2.0" \
   --commit "a1b2c3d..." \
@@ -40,8 +42,14 @@ git commit -S -m "release: authorize enclave v1.2.0"
 git push origin main
 ```
 
+The new registry entry now records `name`, `version`, `tag` (e.g., `v1.2.0`), `git_commit`, and `mrenclave`. These fields are used by `ci/verify_release_build.py` to ensure every `active` measurement entry references a real git tag that points at the recorded commit. If this check fails, the release branch cannot be merged.
+
+For the complete workflow covering tag creation, registry updates, and documentation changes, see `docs/enclave_version_management.md`.
+
 ### 4. Deployment
 Once the registry change is merged, the Gatekeeper (Host) will automatically accept the new measurement. Redeploy the Enclave service.
+
+- **Tag-to-registry verification:** The host CI also runs `ci/verify_release_build.py`, which walks through every active `measurement_registry.json` entry, confirms the git commit exists in `enclave_package/`, and checks that the recorded `tag`/`version` pair refers to a tag that points at that commit. This guard keeps the host from deploying a mismatch between the registry and the enclave submodule.
 
 ## Emergency Patching
 Follow the same process. **Never** bypass the registry, as the Host will refuse to start.

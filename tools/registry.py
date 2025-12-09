@@ -11,6 +11,13 @@ import base64
 
 REGISTRY_PATH = Path(__file__).parent.parent / "measurement_registry.json"
 
+
+def normalize_tag(version: str) -> str:
+    version = version.strip()
+    if version.startswith("v"):
+        return version
+    return f"v{version}"
+
 def load_registry() -> Dict[str, Any]:
     if not REGISTRY_PATH.exists():
         print(f"Error: Registry not found at {REGISTRY_PATH}", file=sys.stderr)
@@ -36,9 +43,13 @@ def cmd_add(args):
             print(f"Error: Measurement {args.mrenclave} already exists in registry.", file=sys.stderr)
             sys.exit(1)
 
+    tag = args.tag or normalize_tag(args.version)
+
     new_entry = {
+        "name": args.name,
         "mrenclave": args.mrenclave,
         "version": args.version,
+        "tag": tag,
         "git_commit": args.commit,
         "build_timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         "profile": args.profile,
@@ -171,6 +182,8 @@ def main():
     add_parser.add_argument("--commit", required=True, help="Git commit SHA")
     add_parser.add_argument("--profile", required=True, choices=["DEV", "TEST", "STAGE", "PROD"], help="Build profile")
     add_parser.add_argument("--status", default="active", choices=["active", "deprecated", "revoked"], help="Initial status")
+    add_parser.add_argument("--name", default="signal-assistant-enclave", help="Identifier for this measurement entry")
+    add_parser.add_argument("--tag", help="Git tag that corresponds to this measurement (defaults to v<version>)")
     add_parser.set_defaults(func=cmd_add)
 
     # Verify command
