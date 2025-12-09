@@ -34,7 +34,7 @@ class SecureChannel:
         """
         Establishes a secure channel. Placeholder for actual implementation.
         """
-        host_logger.info("Host SecureChannel established.")
+        host_logger.info(None, "Host SecureChannel established.")
         return True
 
     def send(self, data: bytes):
@@ -42,19 +42,33 @@ class SecureChannel:
         Encrypts data and sends it to the outbound queue (towards Enclave).
         """
         encrypted_data = self.fernet.encrypt(data)
-        host_logger.debug("Host SecureChannel sending (encrypted data)", metadata={"data_len": len(encrypted_data)})
-        self.outbound_queue.put(encrypted_data)
+        host_logger.debug(None, "Host SecureChannel sending (encrypted data)", metadata={"data_len": len(encrypted_data)})
+        if hasattr(self.outbound_queue, 'put'):
+            self.outbound_queue.put(encrypted_data)
+        else:
+            self.outbound_queue.append(encrypted_data)
 
     def receive(self, timeout: int = 5) -> Optional[bytes]:
         """
         Receives encrypted data from the inbound queue (from Enclave) and decrypts it.
         """
         try:
-            encrypted_data = self.inbound_queue.get(timeout=timeout)
-            host_logger.debug("Host SecureChannel received (encrypted data)", metadata={"data_len": len(encrypted_data)})
+            encrypted_data = None
+            if hasattr(self.inbound_queue, 'get'):
+                encrypted_data = self.inbound_queue.get(timeout=timeout)
+            else:
+                start_time = time.time()
+                while not self.inbound_queue:
+                    if time.time() - start_time > timeout:
+                        host_logger.warning(None, "Host SecureChannel receive timed out (List).")
+                        return None
+                    time.sleep(0.01)
+                encrypted_data = self.inbound_queue.pop(0)
+
+            host_logger.debug(None, "Host SecureChannel received (encrypted data)", metadata={"data_len": len(encrypted_data)})
             decrypted_data = self.fernet.decrypt(encrypted_data)
             return decrypted_data
         except Exception as e:
-            host_logger.warning("Host SecureChannel receive timed out.")
-            host_logger.error(f"Host SecureChannel decryption failed: {e}", metadata={"exception": str(e)})
+            host_logger.warning(None, "Host SecureChannel receive timed out.")
+            host_logger.error(None, f"Host SecureChannel decryption failed: {e}", metadata={"exception": str(e)})
             return None

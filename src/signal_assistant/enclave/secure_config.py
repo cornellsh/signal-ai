@@ -1,4 +1,5 @@
 # src/signal_assistant/enclave/secure_config.py
+import base64 # Added import
 from cryptography.fernet import Fernet
 from signal_assistant.enclave import secure_logging
 from signal_assistant.enclave.exceptions import AttestationError # Import AttestationError
@@ -43,7 +44,8 @@ class SecureConfig:
         try:
             # Get the key using the attestation_verified flag
             api_key_bytes = self.key_manager.get_key("LLM_API_KEY_", attestation_verified)
-            return api_key_bytes.decode('utf-8')
+            # Return base64 string representation of the raw bytes
+            return base64.b64encode(api_key_bytes).decode('utf-8')
         except AttestationError as e:
             secure_logging.error(None, f"Attempted to retrieve LLM API key without verified attestation: {e}")
             raise

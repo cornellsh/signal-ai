@@ -3,6 +3,7 @@ from signal_assistant.config import enclave_settings
 from signal_assistant.enclave.secure_config import SecureConfig, AttestationError
 from signal_assistant.enclave.kms import KeyManager # Import KeyManager
 from signal_assistant.enclave import secure_logging
+from signal_assistant.enclave.privacy_core.sanitizer import SanitizedPrompt # Import SanitizedPrompt
 
 class LLMClient:
     def __init__(self, key_manager: KeyManager): # Accept KeyManager instance
@@ -11,11 +12,16 @@ class LLMClient:
         pass
 
 
-    def generate_response(self, system_prompt: str, chat_history: List[Dict[str, str]], user_message: str, attestation_verified: bool) -> str:
+    def generate_response(self, system_prompt: SanitizedPrompt, chat_history: List[Dict[str, SanitizedPrompt]], user_message: SanitizedPrompt, attestation_verified: bool) -> str:
         """
         Generates a response from the LLM.
         Access to the LLM API key is gated by attestation_verified.
+        Inputs MUST be SanitizedPrompt.
         """
+        if not isinstance(system_prompt, SanitizedPrompt) or not isinstance(user_message, SanitizedPrompt):
+             secure_logging.critical(None, "LLMClient: received non-sanitized prompt!")
+             return "Error: Internal Security Violation (Unsanitized Input)"
+
         try:
             # Attempt to retrieve the LLM API key, which is gated by attestation_verified
             llm_api_key = self.secure_config.get_llm_api_key(attestation_verified)
@@ -28,7 +34,7 @@ class LLMClient:
             return f"Error: LLM access failed: {e}"
 
         # Mock response for now to allow end-to-end testing without API keys
-        # In a real scenario, this would involve calling the actual LLM API
+        # In a real scenario, this would involve calling the actual LLM API using .content
         _ = llm_api_key # Use the key to avoid unused variable warning
         
-        return f"This is a mock AI response to: {user_message}"
+        return f"This is a mock AI response to: {user_message.content}"

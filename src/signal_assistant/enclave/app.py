@@ -1,5 +1,6 @@
 # src/signal_assistant/enclave/app.py
 
+import os # Added os import
 from signal_assistant.enclave.transport import SecureChannel
 from signal_assistant.enclave.signal_lib import SignalLib
 from signal_assistant.enclave.privacy_core.sanitizer import PIISanitizer
@@ -7,6 +8,8 @@ from signal_assistant.enclave.serialization import CommandSerializer
 from signal_assistant.enclave.kms import KeyManager, AttestationError # Import KeyManager and AttestationError
 from signal_assistant.enclave.bot.orchestrator import LLMPipeline # Import LLMPipeline
 from signal_assistant.enclave import secure_logging
+from signal_assistant.enclave.privacy_core.core import IdentityMappingService # Added import
+from signal_assistant.enclave.state_encryption import StateEncryptor # Added import
 import json # Import json for json.JSONDecodeError
 
 class EnclaveApp:
@@ -21,15 +24,20 @@ class EnclaveApp:
         self.llm_pipeline = LLMPipeline(self.key_manager) # Instantiate LLMPipeline with KeyManager
         self._running = False
         self.attestation_is_verified: bool = False # Initialize attestation flag
+        self.identity_service = None # Initialize to None
 
     def _perform_attestation_verification(self) -> bool:
         """
         Simulates internal attestation verification.
         In a real scenario, this would involve complex cryptographic checks.
         """
+        if os.environ.get("MOCK_ATTESTATION_FOR_TESTS_ONLY") == "1":
+             secure_logging.warning(None, "SECURITY WARNING: Using MOCK ATTESTATION. NOT FOR PRODUCTION.")
+             return True
+
         secure_logging.info(None, "EnclaveApp: Performing internal attestation verification (simulated).")
-        # Placeholder: Always succeed for now
-        return True
+        # Fail closed by default
+        return False
 
     def start(self):
         """Starts the enclave app (for testing purposes, processes one message)."""
@@ -42,6 +50,21 @@ class EnclaveApp:
             secure_logging.critical(None, "Enclave attestation failed during startup. Sensitive operations will be blocked.")
         else:
             secure_logging.info(None, "Enclave attestation successful.")
+            # Initialize IdentityMappingService
+            try:
+                 key_id = "ESSK_IDENTITY_MAPPING"
+                 try:
+                     mapping_key = self.key_manager.get_key(key_id, True)
+                 except KeyError:
+                     mapping_key = self.key_manager.generate_key(key_id, True)
+                 
+                 encryptor = StateEncryptor(mapping_key)
+                 self.identity_service = IdentityMappingService(encryptor)
+                 self.identity_service.load_state()
+            except Exception as e:
+                 secure_logging.critical(None, f"Failed to init IdentityService: {e}")
+                 self._running = False
+                 return
 
         if self.secure_channel.establish():
             while self._running:
@@ -82,17 +105,28 @@ class EnclaveApp:
                 if isinstance(plaintext_envelope_bytes, str):
                     plaintext_envelope_bytes = plaintext_envelope_bytes.encode('utf-8')
                 sender, decrypted_message = self.signal_lib.decrypt_envelope(plaintext_envelope_bytes)
-                secure_logging.debug(None, "SignalLib.decrypt_envelope returned message from sender.", {"message_len": len(decrypted_message)})
+                
                 if sender and decrypted_message:
+                    internal_user_id = "UNKNOWN"
+                    if self.identity_service:
+                        internal_user_id = self.identity_service.map_signal_id_to_internal_id(sender)
+                    else:
+                        secure_logging.error(None, "Identity Service unavailable. Dropping message.")
+                        self.secure_channel.send(b"Error: Service Unavailable")
+                        return
+
+                    secure_logging.debug(internal_user_id, "SignalLib.decrypt_envelope returned message from sender.", {"message_len": len(decrypted_message)})
+                    
                     # Use LLMPipeline for processing and sanitization
+                    # Note: decrypted_message is str. process_user_request expects str.
                     response_text = self.llm_pipeline.process_user_request(
-                        internal_user_id=sender, # Assuming sender is internal_user_id for now
+                        internal_user_id=internal_user_id, # Use internal_user_id
                         user_message=decrypted_message,
                         context_data={}, # Placeholder for actual context
                         attestation_verified=self.attestation_is_verified
                     )
-                    secure_logging.info(None, "LLMPipeline processed message.", {"response_len": len(response_text)})
-                    response = f"Message processed from {sender}".encode()
+                    secure_logging.info(internal_user_id, "LLMPipeline processed message.", {"response_len": len(response_text)})
+                    response = f"Message processed from {internal_user_id}".encode() # Do not return sender (SignalID)
                 else:
                     response = b"Failed to decrypt or process message"
             else:
@@ -108,16 +142,29 @@ class EnclaveApp:
             else:
                 response = b"Error: Missing recipient_id or plaintext in payload"
         elif command == "CHECK_LE_POLICY":
-            # Payload expects 'policy_request': str
-            policy_request_str = payload.get("policy_request")
-            if policy_request_str:
-                secure_logging.info(None, "Enforcing LE policy for request.", {"policy_request_str_len": len(policy_request_str)})
-                if "access_sensitive_data" in policy_request_str:
-                    response = b"LE Policy: Access Denied"
-                else:
-                    response = b"LE Policy: Access Granted"
+            # Delegate to IdentityMappingService
+            if not self.identity_service:
+                response = b"Error: Service Unavailable"
             else:
-                response = b"Error: Missing policy_request in payload"
+                # Payload expects 'request_type', 'target_id', 'auth_context'
+                # Mapping from raw payload to LE_REQUEST_TYPE/args might be needed if payload structure differs
+                # Assuming simplified mapping for now or reconstructing from policy_request_str if legacy
+                
+                # Check for legacy structure
+                policy_request_str = payload.get("policy_request")
+                if policy_request_str:
+                     # Simulate translating legacy request to new API
+                     from signal_assistant.enclave.privacy_core.core import LE_REQUEST_TYPE
+                     req_type = LE_REQUEST_TYPE.ACCESS_SENSITIVE_DATA if "access_sensitive_data" in policy_request_str else LE_REQUEST_TYPE.GET_LOGS
+                     
+                     # Using dummy values for target/auth since legacy request didn't specify
+                     resp_obj = self.identity_service.handle_le_request(req_type, "unknown", {"is_authorized_multi_party": False})
+                     if resp_obj.status == "GRANTED":
+                         response = b"LE Policy: Access Granted"
+                     else:
+                         response = b"LE Policy: Access Denied"
+                else:
+                    response = b"Error: Missing policy_request in payload"
         elif command == "STORE_ENCRYPTED_DATA":
             # Payload expects 'signal_id': str and 'encrypted_data': bytes
             signal_id = payload.get("signal_id")

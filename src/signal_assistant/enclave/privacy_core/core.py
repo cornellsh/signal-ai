@@ -1,9 +1,11 @@
+import os
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, Union, List
 import uuid
 import enum
 from signal_assistant.enclave import secure_logging
 from signal_assistant.enclave.state_encryption import StateEncryptor
+from signal_assistant.enclave.privacy_core.sanitizer import SanitizedPrompt
 
 # Type aliases for clarity
 SignalID = str
@@ -23,7 +25,7 @@ class LE_RESPONSE:
 @dataclass
 class DecryptedPayload:
     sender: str
-    content: str
+    content: Union[str, SanitizedPrompt]
     timestamp: int
 
 class KeyStore:
@@ -49,12 +51,44 @@ class IdentityMappingService:
     Manages the mapping between SignalID and InternalUserID strictly within the Enclave.
     Enforces privacy by ensuring Host only sees InternalUserID.
     """
-    def __init__(self, state_encryptor: StateEncryptor):
+    def __init__(self, state_encryptor: StateEncryptor, storage_path: str = "/tmp/enclave_identity.enc"):
         self._state_encryptor = state_encryptor
-        # In-memory storage for prototype; in production, this would be encrypted persistence
+        self._storage_path = storage_path
         self._signal_to_internal: Dict[SignalID, InternalUserID] = {}
         self._internal_to_signal: Dict[InternalUserID, SignalID] = {}
         
+    def load_state(self):
+        if not os.path.exists(self._storage_path):
+             return
+        
+        try:
+            with open(self._storage_path, "rb") as f:
+                encrypted_blob = f.read()
+            
+            state = self._state_encryptor.decrypt(encrypted_blob)
+            self._signal_to_internal = state.get("signal_to_internal", {})
+            self._internal_to_signal = state.get("internal_to_signal", {})
+            secure_logging.info(None, "Identity state loaded successfully.")
+        except Exception as e:
+            secure_logging.error(None, f"Failed to load identity state: {e}")
+
+    def save_state(self):
+        state = {
+            "signal_to_internal": self._signal_to_internal,
+            "internal_to_signal": self._internal_to_signal
+        }
+        try:
+            encrypted_blob = self._state_encryptor.encrypt(state)
+            # Atomic write
+            temp_path = self._storage_path + ".tmp"
+            with open(temp_path, "wb") as f:
+                f.write(encrypted_blob)
+            os.replace(temp_path, self._storage_path)
+            secure_logging.info(None, "Identity state saved successfully.")
+        except Exception as e:
+            secure_logging.critical(None, f"Failed to save identity state: {e}")
+            raise
+
     def map_signal_id_to_internal_id(self, signal_id: SignalID) -> InternalUserID:
         """
         Retrieves or creates an InternalUserID for a given SignalID.
@@ -69,6 +103,7 @@ class IdentityMappingService:
         self._signal_to_internal[signal_id] = internal_id
         self._internal_to_signal[internal_id] = signal_id
         secure_logging.info(None, "Created new InternalUserID for external ID.", {"internal_id": internal_id})
+        self.save_state() # Persist
         return internal_id
 
     def delete_user_data(self, internal_user_id: InternalUserID) -> None:
@@ -83,6 +118,7 @@ class IdentityMappingService:
             
             # TODO: Trigger deletion of LongTermMemory and Host metadata via IPC
             secure_logging.info(None, "Deleted user data and mapping.", {"internal_id": internal_user_id})
+            self.save_state() # Persist
         else:
             secure_logging.warning(None, "Attempted to delete unknown InternalUserID.", {"internal_id": internal_user_id})
 

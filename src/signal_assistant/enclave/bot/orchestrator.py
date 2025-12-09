@@ -44,21 +44,6 @@ class LLMPipeline: # Renamed from BotOrchestrator
         system_prompt = "You are a helpful privacy-focused assistant."
         chat_history = context_data.get("history", []) if context_data else []
         
-        # Sanitize individual components BEFORE assembly if they could contain PII
-        # Although PIISanitizer.sanitize will be called on the *final* assembled prompt,
-        # it's good practice to sanitize inputs that directly form parts of the prompt
-        # if they originate from untrusted sources or could contain PII.
-        
-        sanitized_system_prompt = PIISanitizer.sanitize(system_prompt)
-        sanitized_user_message = PIISanitizer.sanitize(user_message)
-        
-        sanitized_chat_history = []
-        for entry in chat_history:
-            sanitized_chat_history.append({
-                "role": entry["role"],
-                "content": PIISanitizer.sanitize(entry["content"])
-            })
-
         # Assemble the full prompt string
         # For LLMClient.generate_response, this assembly happens internally based on its arguments.
         # The critical part is that *all* text content flowing into generate_response is sanitized.
@@ -72,10 +57,23 @@ class LLMPipeline: # Renamed from BotOrchestrator
         # we ensure each of these is sanitized before passing.
         
         # Call LLM with sanitized inputs and attestation status
+        # Note: We sanitize system_prompt and user_message explicitly.
+        # chat_history elements should also be sanitized.
+        
+        sanitized_system_prompt_obj = PIISanitizer.sanitize(system_prompt)
+        sanitized_user_message_obj = PIISanitizer.sanitize(user_message)
+        
+        sanitized_chat_history_objs = []
+        for entry in chat_history:
+            sanitized_chat_history_objs.append({
+                "role": entry["role"],
+                "content": PIISanitizer.sanitize(entry["content"])
+            })
+
         response_text = self.llm.generate_response(
-            system_prompt=sanitized_system_prompt,
-            chat_history=sanitized_chat_history,
-            user_message=sanitized_user_message,
+            system_prompt=sanitized_system_prompt_obj,
+            chat_history=sanitized_chat_history_objs,
+            user_message=sanitized_user_message_obj,
             attestation_verified=attestation_verified # Pass the attestation flag
         )
 

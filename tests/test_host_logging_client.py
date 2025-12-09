@@ -1,6 +1,9 @@
 import pytest
 import re # Import re for re.escape
-from signal_assistant.host import logging_client
+from signal_assistant.host.logging_client import LoggingClient
+
+# Instantiate a global client for tests to use
+logging_client = LoggingClient("TestHostLogger")
 
 # Define the PII patterns as they are in logging_client.py for consistent testing
 PII_EMAIL_PATTERN = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'

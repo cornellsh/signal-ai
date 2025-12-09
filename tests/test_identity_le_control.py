@@ -1,5 +1,7 @@
 
 import pytest
+import tempfile
+import os
 from unittest.mock import MagicMock
 from signal_assistant.enclave.privacy_core.core import IdentityMappingService, LE_REQUEST_TYPE, LE_RESPONSE
 from signal_assistant.enclave.state_encryption import StateEncryptor
@@ -10,8 +12,30 @@ def mock_state_encryptor():
     return StateEncryptor(b'0'*32)
 
 @pytest.fixture
-def identity_service(mock_state_encryptor):
-    return IdentityMappingService(mock_state_encryptor)
+def identity_db_path():
+    fd, path = tempfile.mkstemp()
+    os.close(fd)
+    yield path
+    if os.path.exists(path):
+        os.remove(path)
+    if os.path.exists(path + ".tmp"):
+        os.remove(path + ".tmp")
+
+@pytest.fixture
+def identity_service(mock_state_encryptor, identity_db_path):
+    return IdentityMappingService(mock_state_encryptor, storage_path=identity_db_path)
+
+def test_persistence(mock_state_encryptor, identity_db_path):
+    # 1. Create service, map user
+    svc1 = IdentityMappingService(mock_state_encryptor, storage_path=identity_db_path)
+    internal_id = svc1.map_signal_id_to_internal_id("signal-123")
+    
+    # 2. Re-create service (simulate restart)
+    svc2 = IdentityMappingService(mock_state_encryptor, storage_path=identity_db_path)
+    svc2.load_state() # Must call load!
+    
+    # 3. Check mapping exists
+    assert svc2._signal_to_internal.get("signal-123") == internal_id
 
 def test_map_signal_id_to_internal_id(identity_service):
     signal_id = "+15550001234"

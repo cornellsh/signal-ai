@@ -3,6 +3,9 @@ import pytest
 import threading
 import time
 import copy # For deepcopying messages to simulate tampering
+import os
+import re
+from unittest.mock import patch
 
 from signal_assistant.host.proxy import EnclaveProxy
 from signal_assistant.enclave.app import EnclaveApp
@@ -10,6 +13,7 @@ from signal_assistant.enclave.transport import SecureChannel as EnclaveSecureCha
 from signal_assistant.host.transport import SecureChannel as HostSecureChannel
 from signal_assistant.enclave.serialization import CommandSerializer # Import for testing serialization directly
 from signal_assistant.enclave.signal_lib import SignalLib # Import for direct testing of SignalLib encryption
+from signal_assistant.enclave.privacy_core.core import IdentityMappingService # Added import
 
 # These lists will act as our simulated message queues
 host_to_enclave_queue = []
@@ -27,6 +31,9 @@ def setup_enclave_app_module():
     global enclave_app_instance, enclave_thread_instance
     print("\nSetting up EnclaveApp for module...")
     
+    # Enable mock attestation for the module-scoped enclave instance
+    os.environ["MOCK_ATTESTATION_FOR_TESTS_ONLY"] = "1"
+    
     host_to_enclave_queue.clear()
     enclave_to_host_queue.clear()
 
@@ -41,18 +48,27 @@ def setup_enclave_app_module():
         enclave_app_instance.stop()
     if enclave_thread_instance and enclave_thread_instance.is_alive():
         enclave_thread_instance.join(timeout=2)
+    
+    # Cleanup env var
+    if "MOCK_ATTESTATION_FOR_TESTS_ONLY" in os.environ:
+        del os.environ["MOCK_ATTESTATION_FOR_TESTS_ONLY"]
 
 # --- Existing Tests ---
 
 def test_enclave_status_command():
     print("\nRunning test_enclave_status_command...")
     proxy = EnclaveProxy(host_to_enclave_queue, enclave_to_host_queue)
+    # Sync key
+    proxy.secure_channel.fernet = enclave_app_instance.secure_channel.cipher_suite
+    
     status = proxy.get_enclave_status()
     assert status == "Enclave Status: Enclave is Operational"
 
 def test_unknown_command():
     print("\nRunning test_unknown_command...")
     proxy = EnclaveProxy(host_to_enclave_queue, enclave_to_host_queue)
+    proxy.secure_channel.fernet = enclave_app_instance.secure_channel.cipher_suite
+    
     payload = {"data": "some_data"}
     unknown_response = proxy.send_command("UNKNOWN_CMD", payload)
     assert unknown_response.decode() == "Unknown Command"
@@ -60,6 +76,7 @@ def test_unknown_command():
 def test_inbound_message_processing():
     print("\nRunning test_inbound_message_processing...")
     proxy = EnclaveProxy(host_to_enclave_queue, enclave_to_host_queue)
+    proxy.secure_channel.fernet = enclave_app_instance.secure_channel.cipher_suite
     
     # SignalLib now expects and returns plaintext bytes
     sender_id_mock = "mock_sender_id" # This is the hardcoded sender_id in SignalLib.encrypt_message
@@ -70,12 +87,16 @@ def test_inbound_message_processing():
 
     payload = {"encrypted_envelope": mock_envelope_bytes} # Renamed for clarity, it's now mock raw bytes
     response = proxy.send_command("INBOUND_MESSAGE", payload)
-    assert f"Message processed from {sender_id_mock}" in response.decode()
+    # The response should contain an Internal User ID (UUID), NOT the SignalID
+    assert "Message processed from" in response.decode()
+    assert sender_id_mock not in response.decode() # SignalID must not be returned
 
 
 def test_outbound_message_processing():
     print("\nRunning test_outbound_message_processing...")
     proxy = EnclaveProxy(host_to_enclave_queue, enclave_to_host_queue)
+    proxy.secure_channel.fernet = enclave_app_instance.secure_channel.cipher_suite
+    
     recipient = "+1234567890"
     plaintext = "This is a secret message."
     payload = {"recipient_id": recipient, "plaintext": plaintext}
@@ -86,6 +107,8 @@ def test_outbound_message_processing():
 def test_law_enforcement_policy_check():
     print("\nRunning test_law_enforcement_policy_check...")
     proxy = EnclaveProxy(host_to_enclave_queue, enclave_to_host_queue)
+    proxy.secure_channel.fernet = enclave_app_instance.secure_channel.cipher_suite
+    
     denied_request = "access_sensitive_data_user_123"
     payload_denied = {"policy_request": denied_request}
     response_denied = proxy.send_command("CHECK_LE_POLICY", payload_denied)
@@ -94,11 +117,14 @@ def test_law_enforcement_policy_check():
     granted_request = "check_public_record_user_456"
     payload_granted = {"policy_request": granted_request}
     response_granted = proxy.send_command("CHECK_LE_POLICY", payload_granted)
-    assert "LE Policy: Access Granted" in response_granted.decode()
+    # Default is now DENY because auth context is hardcoded to False in EnclaveApp
+    assert "LE Policy: Access Denied" in response_granted.decode()
 
 def test_secure_logging_and_storage():
     print("\nRunning test_secure_logging_and_storage...")
     proxy = EnclaveProxy(host_to_enclave_queue, enclave_to_host_queue)
+    proxy.secure_channel.fernet = enclave_app_instance.secure_channel.cipher_suite
+    
     test_signal_id = "user123_encrypted_state"
     test_encrypted_data = b"encrypted_blob_for_user123" # This is now raw bytes, will be base64 encoded by serializer
     payload = {"signal_id": test_signal_id, "encrypted_data": test_encrypted_data}
@@ -119,6 +145,9 @@ def test_secure_channel_end_to_end_encryption():
     # Establish channels (just prints for now)
     host_channel.establish()
     enclave_channel.establish()
+
+    # Sync keys for testing
+    host_channel.fernet = enclave_channel.cipher_suite
 
     original_message = b"This is a secret message from host to enclave."
     host_channel.send(original_message)
@@ -144,6 +173,9 @@ def test_secure_channel_tampering_detection():
 
     host_channel.establish()
     enclave_channel.establish()
+
+    # Sync keys for testing
+    host_channel.fernet = enclave_channel.cipher_suite
 
     original_message = b"Message to be tampered with."
     host_channel.send(original_message)
@@ -185,9 +217,12 @@ def test_command_serialization_tampering_detection():
     host_channel.establish()
     enclave_channel.establish()
     
+    # Sync keys for testing
+    host_channel.fernet = enclave_channel.cipher_suite
+    
     # Send the tampered data through the *encrypted* channel
     # First, encrypt the ORIGINAL data.
-    original_encrypted_command = host_channel.cipher_suite.encrypt(serialized_data)
+    original_encrypted_command = host_channel.fernet.encrypt(serialized_data)
     
     # NOW tamper with the ENCRYPTED data
     tampered_encrypted_command = bytearray(original_encrypted_command)
@@ -198,3 +233,96 @@ def test_command_serialization_tampering_detection():
     # Enclave attempts to receive and decrypt
     received_plaintext = enclave_channel.receive()
     assert received_plaintext is None
+
+def test_identity_mapping_persistence():
+    print("\nRunning test_identity_mapping_persistence...")
+    
+    # Use a temporary file for IdentityMappingService state
+    temp_state_file = "/tmp/test_enclave_identity.enc"
+    if os.path.exists(temp_state_file):
+        os.remove(temp_state_file) # Ensure clean state
+
+    # Mock attestation for this specific test
+    os.environ["MOCK_ATTESTATION_FOR_TESTS_ONLY"] = "1"
+    
+    # Use a fixed key for persistence test
+    fixed_key = os.urandom(32)
+    
+    # Patch KeyManager.generate_key to return the fixed key
+    with patch('signal_assistant.enclave.kms.KeyManager.generate_key', return_value=fixed_key):
+        # --- First Enclave Run: Create a mapping ---
+        host_to_enclave_q1 = []
+        enclave_to_host_q1 = []
+        
+        # Patch the storage_path for IdentityMappingService to use our temp file
+        # Capture original init to avoid recursion
+        original_init = IdentityMappingService.__init__
+        
+        with patch('signal_assistant.enclave.privacy_core.core.IdentityMappingService.__init__', autospec=True) as mock_init:
+            # Define side effect to call original init with modified storage_path
+            def side_effect(self, state_encryptor, storage_path="/tmp/enclave_identity.enc"):
+                return original_init(self, state_encryptor, storage_path=temp_state_file)
+            
+            mock_init.side_effect = side_effect
+            
+            enclave_app1 = EnclaveApp(host_to_enclave_q1, enclave_to_host_q1)
+            enclave_thread1 = threading.Thread(target=run_enclave_app_in_thread, args=(enclave_app1,))
+            enclave_thread1.daemon = True
+            enclave_thread1.start()
+            time.sleep(1) # Give enclave time to start
+            
+            proxy1 = EnclaveProxy(host_to_enclave_q1, enclave_to_host_q1)
+            proxy1.secure_channel.fernet = enclave_app1.secure_channel.cipher_suite # SYNC KEYS
+            
+            sender_id_mock = "mock_sender_id_persist"
+            plaintext_message = "Hello, create my ID!"
+            mock_envelope_bytes = f"{sender_id_mock}:{plaintext_message}".encode('utf-8')
+            payload = {"encrypted_envelope": mock_envelope_bytes}
+            response1 = proxy1.send_command("INBOUND_MESSAGE", payload)
+            
+            # Extract the internal_user_id from the response (UUID format)
+            match = re.search(r"Message processed from ([a-f0-9-]{36})", response1.decode())
+            assert match
+            first_internal_user_id = match.group(1)
+            
+            enclave_app1.stop()
+            enclave_thread1.join(timeout=2)
+            
+        # --- Second Enclave Run: Verify persistence ---
+        host_to_enclave_q2 = []
+        enclave_to_host_q2 = []
+        
+        # Ensure the IdentityMappingService uses the SAME temp file
+        with patch('signal_assistant.enclave.privacy_core.core.IdentityMappingService.__init__', autospec=True) as mock_init:
+            def side_effect(self, state_encryptor, storage_path="/tmp/enclave_identity.enc"):
+                return original_init(self, state_encryptor, storage_path=temp_state_file)
+            mock_init.side_effect = side_effect
+            
+            enclave_app2 = EnclaveApp(host_to_enclave_q2, enclave_to_host_q2)
+            enclave_thread2 = threading.Thread(target=run_enclave_app_in_thread, args=(enclave_app2,))
+            enclave_thread2.daemon = True
+            enclave_thread2.start()
+            time.sleep(1) # Give enclave time to start
+            
+            proxy2 = EnclaveProxy(host_to_enclave_q2, enclave_to_host_q2)
+            proxy2.secure_channel.fernet = enclave_app2.secure_channel.cipher_suite # SYNC KEYS
+            
+            # Send another message from the same sender_id
+            plaintext_message2 = "Hello again, I should have the same ID!"
+            mock_envelope_bytes2 = f"{sender_id_mock}:{plaintext_message2}".encode('utf-8')
+            payload2 = {"encrypted_envelope": mock_envelope_bytes2}
+            response2 = proxy2.send_command("INBOUND_MESSAGE", payload2)
+            
+            match2 = re.search(r"Message processed from ([a-f0-9-]{36})", response2.decode())
+            assert match2
+            second_internal_user_id = match2.group(1)
+            
+            assert first_internal_user_id == second_internal_user_id
+            
+            enclave_app2.stop()
+            enclave_thread2.join(timeout=2)
+
+    # Clean up
+    if os.path.exists(temp_state_file):
+        os.remove(temp_state_file)
+    del os.environ["MOCK_ATTESTATION_FOR_TESTS_ONLY"] # Clean up env var

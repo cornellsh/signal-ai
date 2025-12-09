@@ -32,7 +32,8 @@ def mock_llm_client():
 @pytest.fixture
 def llm_pipeline(mock_llm_client):
     """Provides an LLMPipeline instance with a mocked LLMClient."""
-    pipeline = LLMPipeline()
+    mock_key_manager = MagicMock()
+    pipeline = LLMPipeline(mock_key_manager)
     pipeline.llm = mock_llm_client
     return pipeline
 
@@ -62,12 +63,12 @@ def test_llm_pipeline_sanitizes_user_message_before_llm_call(llm_pipeline, mock_
     user_message_arg = kwargs.get('user_message')
 
     # Assert that the user_message argument passed to the LLM is sanitized
-    assert user_message_arg == EXPECTED_REDACTED_PII_MESSAGE
-    assert PII_USER_MESSAGE not in user_message_arg # Ensure original PII is not present
+    assert user_message_arg.content == EXPECTED_REDACTED_PII_MESSAGE
+    assert PII_USER_MESSAGE not in user_message_arg.content # Ensure original PII is not present
 
     # Assert that other components are also sanitized, even if they don't contain PII
     # based on the current implementation of LLMPipeline which sanitizes all inputs
-    assert system_prompt_arg == PIISanitizer.sanitize("You are a helpful privacy-focused assistant.")
+    assert system_prompt_arg.content == PIISanitizer.sanitize("You are a helpful privacy-focused assistant.").content
     assert chat_history_arg == [] # Empty as no history in context_data
 
 
@@ -98,11 +99,11 @@ def test_llm_pipeline_sanitizes_context_before_llm_call(llm_pipeline, mock_llm_c
 
     # Assert that the chat history in context is sanitized
     assert len(chat_history_arg) == 2
-    assert chat_history_arg[0]['content'] == PIISanitizer.sanitize(PII_CONTEXT_MESSAGE)
-    assert PII_CONTEXT_MESSAGE not in chat_history_arg[0]['content'] # Ensure original PII is not present
+    assert chat_history_arg[0]['content'].content == PIISanitizer.sanitize(PII_CONTEXT_MESSAGE).content
+    assert PII_CONTEXT_MESSAGE not in chat_history_arg[0]['content'].content # Ensure original PII is not present
 
     # Assert that the non-PII user message is still present (and sanitized, though no PII to redact)
-    assert user_message_arg == PIISanitizer.sanitize(NON_PII_USER_MESSAGE)
+    assert user_message_arg.content == PIISanitizer.sanitize(NON_PII_USER_MESSAGE).content
 
 def test_llm_pipeline_does_not_mutate_original_inputs(llm_pipeline, mock_llm_client):
     """
@@ -128,3 +129,33 @@ def test_llm_pipeline_does_not_mutate_original_inputs(llm_pipeline, mock_llm_cli
     # Assert that the original inputs have not been changed
     assert original_user_message == user_message_copy
     assert original_context_data == context_data_copy
+
+def test_llm_client_rejects_non_sanitized_prompt():
+    """
+    Tests that LLMClient.generate_response explicitly rejects non-SanitizedPrompt inputs.
+    """
+    mock_key_manager = MagicMock()
+    llm_client = LLMClient(mock_key_manager)
+
+    # Test with raw string for system_prompt
+    response = llm_client.generate_response(
+        system_prompt="raw string",
+        chat_history=[],
+        user_message=PIISanitizer.sanitize("test"),
+        attestation_verified=True
+    )
+    assert "Error: Internal Security Violation (Unsanitized Input)" in response
+
+    # Test with raw string for user_message
+    response = llm_client.generate_response(
+        system_prompt=PIISanitizer.sanitize("test"),
+        chat_history=[],
+        user_message="raw string",
+        attestation_verified=True
+    )
+    assert "Error: Internal Security Violation (Unsanitized Input)" in response
+
+    # Test with raw string in chat_history (though LLMPipeline should prevent this, LLMClient should still be robust)
+    # This case might be less direct for LLMClient to catch since chat_history is a list of dicts.
+    # The current LLMClient only checks system_prompt and user_message directly.
+    # LLMPipeline is responsible for sanitizing chat_history entries before passing them.

@@ -18,8 +18,11 @@ class SecureChannel:
         Encrypts and sends data securely.
         """
         encrypted_data = self.cipher_suite.encrypt(plaintext_data)
-        print(f"Enclave SecureChannel sending (encrypted): {encrypted_data}")
-        self.message_queue_out.put(encrypted_data)
+        # print(f"Enclave SecureChannel sending (encrypted): {encrypted_data}")
+        if hasattr(self.message_queue_out, 'put'):
+            self.message_queue_out.put(encrypted_data)
+        else:
+            self.message_queue_out.append(encrypted_data)
 
     def receive(self, timeout=5) -> bytes | None:
         """
@@ -27,14 +30,28 @@ class SecureChannel:
         Includes a timeout to prevent indefinite blocking.
         """
         start_time = time.time()
-        while not self.message_queue_in:
-            if time.time() - start_time > timeout:
-                print("Enclave SecureChannel receive timed out.")
-                return None
-            time.sleep(0.01) # Small delay to prevent busy-waiting
         
-        encrypted_data = self.message_queue_in.get(timeout=timeout)
-        print(f"Enclave SecureChannel received (encrypted): {encrypted_data}")
+        # Helper to get data regardless of queue type
+        encrypted_data = None
+        
+        # Check if it's a Queue-like object (has .get)
+        if hasattr(self.message_queue_in, 'get'):
+             try:
+                 # We assume .get() supports timeout if it's a Queue
+                 encrypted_data = self.message_queue_in.get(timeout=timeout)
+             except: # Queue.Empty is not available in global scope easily if using duck typing, catch generic
+                 print("Enclave SecureChannel receive timed out (Queue).")
+                 return None
+        else:
+            # Assume list-like
+            while not self.message_queue_in:
+                if time.time() - start_time > timeout:
+                    print("Enclave SecureChannel receive timed out (List).")
+                    return None
+                time.sleep(0.01) # Small delay to prevent busy-waiting
+            encrypted_data = self.message_queue_in.pop(0)
+
+        # print(f"Enclave SecureChannel received (encrypted): {encrypted_data}")
         
         try:
             decrypted_data = self.cipher_suite.decrypt(encrypted_data)

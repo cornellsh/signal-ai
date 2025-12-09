@@ -21,11 +21,14 @@ class EnclaveProxy:
         Payload is now a dictionary.
         """
         message_bytes = CommandSerializer.serialize(command, payload)
-        # Log command and payload keys, but NOT sensitive payload content
-        host_logger.info(f"Host EnclaveProxy sending command: {command}", metadata={"payload_keys": list(payload.keys())})
+        # Log command, but avoid logging payload details which might contain sensitive keys or trigger filters
+        host_logger.info(None, f"Host EnclaveProxy sending command: {command}")
         self.secure_channel.send(message_bytes)
         response = self.secure_channel.receive()
-        host_logger.info(f"Host EnclaveProxy received response.", metadata={"response_len": len(response)})
+        if response:
+             host_logger.info(None, f"Host EnclaveProxy received response.", metadata={"response_len": len(response)})
+        else:
+             host_logger.warning(None, "Host EnclaveProxy received no response (timeout).")
         return response
 
     def get_enclave_status(self) -> str:
@@ -41,7 +44,7 @@ class EnclaveProxy:
         This operation is gated by host-side attestation verification.
         """
         if not attestation_verified_by_host:
-            host_logger.error("Host: Refusing to provision EAK to Enclave. Host attestation verification failed.")
+            host_logger.error(None, "Host: Refusing to provision EAK to Enclave. Host attestation verification failed.")
             return False
         
         # In a real scenario, the host would verify the enclave's attestation report.
